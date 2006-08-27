@@ -1,0 +1,5 @@
+ntpclock.*
+!ntpclock.asm
+!NTPClock.mcp
+*.bat
+TempICD.ini
