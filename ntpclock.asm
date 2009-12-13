@@ -1,13 +1,13 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v2.0.0
+; NTPClock Firmware v2.0.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
-; (C) Peter Csaszar, 2002-2006
+; (C) Peter Csaszar, 2002-2009
 ; http://www.nixiana.com
 ;
 ; Created: July 27, 2002
-; Last modified: August 27, 2006
+; Last modified: December 13, 2009
 
 
 ;        1         2         3         4         5         6         7         8        
@@ -464,10 +464,10 @@ PreloadClk	Movlf	23,vHour
 
 PreloadFirm	Movlf	2,vHour			; Version# [major.minor.subminor]
 		Movlf	0,vMin
-		Movlf	0,vSec
-		Movlf	8,vMonth		; Release date
-		Movlf	27,vDay
-		Movlf	6,vYear
+		Movlf	2,vSec
+		Movlf	12,vMonth		; Release date
+		Movlf	13,vDay
+		Movlf	9,vYear
 		return
 
 	
@@ -712,7 +712,8 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		bcf	INTCON,T0IF		; Clear the Timer0 IT flag
 		Movff	vFsrTmp,FSR		; Restore FSR
 		Movff	vStsTmp,STATUS		; Restore STATUS
-		movf	vWTmp, W		; Restore W
+		swapf	vWTmp,F			; Restore W (Tricky solution needed:
+		swapf	vWTmp,W			;   "movf vwTmp,W" affects the Z flag!)
 		bcf	PORTB,bINISR		; Clear the In ISR bit
 
 		retfie
