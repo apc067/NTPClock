@@ -1,20 +1,15 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.0.0
+; NTPClock Firmware v3.1.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
-; (C) Peter Csaszar, 2002-2013
-; http://www.nixiana.com
-;
-; Created: July 27, 2002
-; Last modified: April 8, 2013
+; (C) Peter Csaszar - http://www.nixiana.com
 
 
 ;        1         2         3         4         5         6         7         8        
 ; 34567890123456789012345678901234567890123456789012345678901234567890123456789012345678
 ;
-; Recommended font: Courier New, 9 pt
-; Recommended tab:  8
+; Recommended tab spacing: 8
 
 
 ;***************************************************************************************
@@ -37,12 +32,12 @@
 ; PORTA 3 (O): Digit bit D (MSB)
 ; PORTA 4 (O): Decimal point
 ;
-; PORTB 0 (I): Index Hole input
-; PORTB 1 (I): Control Button input
+; PORTB 0 (I): Index Hole input (active low)
+; PORTB 1 (I): Control Button input (active low)
 ; PORTB 2 (O): In ISR output [diagnostics]
-; PORTB 3 (I): 12/24-hour Selector input
+; PORTB 3 (I): 12/24-hour Selector input (low: 24h)
 ; PORTB 4 (O): Beeper output
-; PORTB 5 (I): <Unused>
+; PORTB 5 (O): Idle output [diagnostics]
 ; PORTB 6 (I): <Unused>  [ICSP Clock]
 ; PORTB 7 (I): <Unused>  [ICSP Data]
 
@@ -52,21 +47,29 @@
 ;***************************************************************************************
 
 ; 1. Hour Notation
-;    - 12-Hour: "12/24H" Jumper off
-;    - 24-Hour: "12/24H" Jumper on
+;    - 12-hour: "12/24h" Jumper off
+;    - 24-hour: "12/24h" Jumper on
 ;
 ; 2. Display Mode
-;    - Scrolling:  vDspMod=0
-;    - Stationary: vDspMod=255
+;    - Alternating:  vDspMod = 0 (Stationary display with alternating date/time sides)
+;    - Left-Scroll:  vDspMod = 1
+;    - Stand-Scroll: vDspMod = 2 (Quasi-stationary - for fun / to tune display timing)
+;    - Right-Scroll: vDspMod = 3
 ;
 ; 3. Operating State
-;    - Running: vSetPrt=0
-;    - Setting: vSetPtr=Non0
+;    - Running: vSetPrt = 0
+;    - Setting: vSetPtr = Non0
 ;
 ; 4. Different conditions
-;    - Frozen Clock:  vFlags:bFROZEN=1 (Waiting for button push to start clock)
-;    - Firmware Info: vFlags:bFIRMWR=1 (Displaying firmware info instead of time)
-;    - Carousel Test: vFlags:bCARTST=1 (Quasi-stationary display in Scrolling Mode)
+;    - Frozen Clock: vFlags:bFROZEN = 1 (Waiting for button push to start clock)
+;    - Device Info:  vFlags:bDEVINF = 1 (Displaying device info instead of time)
+;
+; 5. Display behavior
+;    - Stationary: Display position is stabilized using the Index Hole
+;       - Display Mode = Alternating  -OR-
+;       - Operating State = Setting   -OR-
+;       - Frozen Clock Condition
+;    - Scrolling: Not Stationary
 
 
 ;***************************************************************************************
@@ -100,8 +103,8 @@ cMAGCNT		equ	1			; Normal-1, Debug-64 (0.5 sec/digit)
 ; Fundamental constants (Note: iter = PtDelay InnerLoop's non-quitting iteration)
 
 cCCPIC		equ	4			; Clock cycles per instr. cycle [cc/ic]
-cPTPR		equ	2000			; Points per revolution [point/rev]
-cICPITR		equ	6			; Instr. cycles per loop iter [ic/iter]
+cPTPREV		equ	2000			; Points per revolution [point/rev]
+cICPITR		equ	6			; Instr. cycles per iter [ic/iter] {1}
 
 ; Geometrical constants
 
@@ -112,26 +115,26 @@ cDIGWID		equ	8			; Digit width [mm]
 ; Timing configuration & adjustment constants
 
 cTCKCOR		equ	0			; Seconds per 1 leap second (0: unused)
-
 cTMRPSC		equ	256			; Timer0 prescaler (Also see "####"!)
 cTMRCNT		equ	256			; Timer0 required count (Just max out)
-cLPCOR		equ	3			; Loop count overhead correction [iter]
-cPRXCOR		equ	80			; IR LED parallax correction [point]
+cLPCOR		equ	2			; Loop iteration correction [iter] {2}
 
 ; Calculated system constants (Note: tick = Timer0 interrupt)
 
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
-cTCKPS		equ	cFCLK/cCCPIC/cTMRPSC/cTMRCNT
-						; Ticks per sec (truncated!) [tick/s]
-cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Ticks until a Long Button Event [tick]
-cLPCNT		equ	(cFCLK/(cCCPIC*cICPITR)) / (cFROT*cPTPR/60) - cLPCOR	
-						; Loop iterations per point [iter/point]
-cSCRGAP		equ	cPTPR*cFSCR/cFROT	; Angle gap causing scroll [point]
+cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
+cITRPS		equ	cICPS/cICPITR		; Iterations per sec [iter/s]
+cPTPS		equ	cFROT*cPTPREV/60	; Points per sec [point/s]
+cLPCNT		equ	cITRPS/cPTPS - cLPCOR	; Loop iterations per point [iter/point]
+cSCRGAP		equ	cPTPREV*cFSCR/cFROT	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
-						; 2*arctg(cDIGWID/(2*cRMIN))*cPTPROT/PI
+						; 2*arctg(cDIGWID/(2*cRMIN))*cPTPREV/PI
+cTCKPS		equ	cICPS/cTMRPSC/cTMRCNT	; Ticks per sec (truncated!) [tick/s]
+cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Ticks until a Long Button Event [tick]
+
 ; Point delay constants for display layout [point]
 
-cDIGLTP		equ	10			; Digit Light Pause
+cDIGLTP		equ	10			; Digit Light-Up Pause
 cDIGWP		equ	cDIGWAN			; Digit Width Pause
 cDIGIT		equ	cDIGLTP+cDIGWP		; Total Digit width
 cIDP		equ	15			; Inter-Digit Pause
@@ -139,25 +142,46 @@ cHDIGP		equ	cDIGIT/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
-cPRESP		equ	(cPTPR/2-cSTRING)/2	; Pre-String Pause
+cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
 cISP		equ	cSCRGAP			; Inter-Side Pause
 cPOSTSP		equ	cPRESP-cISP		; Post-String Pause
-cFUDGE		equ	10			; Empirical 1000-point correction (*)
+cREVCOR		equ	4			; Revolution Correction {3}
+cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
  		
- 		if	cPRESP>255 		; Check the value of cPRESP {**}
+ 		if	cPRESP>255 		; Check the value of cPRESP {5}
 		error 	"Pre-String Pause value doesn't fit into a byte"
 		endif
 
-; (*) Set by attempting to stop a scrolling display ["quasi-stationary" display] in
-; Carousel Test Condition, so that the rotation speed of scrolling messages set by cFROT
-; will be accurate. It compensates for the discrepancy introduced by rounding errors,
-; the ISR's delay effect and the relative inaccuracy of the floppy motor's speed control
-; and the uC's quartz crystal. Note however that despite all these efforts, achieving a
-; stationary display is virtually impossible without some position syncronization [such
-; as the "Index Hole" using the IR LED/photodiode pair in this particular solution]. So
-; then why be so dead serious about it? Just for FUN...! :-)
+; Notes:
 ;
-; {**} The Pre-String Pause is the longest delay during display generation. If its value
+; {1} Number of instruction cycles along the most executed section of code [Idle-code],
+; the non-quitting, non-beeper-toggling iteration of IterLoop: 2 non-skipping decfsz's
+; (1 cycle each) and 2 goto's (2 cycles each).
+;
+; {2} Correction factor for the number of IterLoop iterations per point, accounting for
+; all the instruction cycles not spent in the Idle-code. It is tuned by finding the
+; smallest value, where a Stand-Scrolling display is still rotating left (with cREVCOR
+; set to 0).
+;
+; {3} The final Idle delay within a full display cycle, which is a "shim" factor to
+; synchronize the angular speed of display generation to the angular speed of the
+; carousel as much as possible. It is tuned by finding the value, where the Stand-
+; Scrolling display is the closest to stationary (with cLPCOR already tuned). Despite
+; all these efforts, achieving a quasi-stationary display this way is virtually
+; impossible, and it may also be affected by temperature and other factors. Therefore,
+; for the stationary display of the Alternating Mode, position syncronization is done
+; using the "Index Hole" IR LED/photodiode pair recycled from the original floppy drive.
+; However, fine-tuning the display synchronity will maximize the correctness of the
+; specified display scroll angular speed (cFROT) for the scrolling display modes.
+;
+; {4} Correction factor compensating for the fact that while the "Index Hole" IR LED is
+; positioned such that it perfectly lines up with the photodiode when the longer edge of
+; the rotating circuit board is parallel to the front of the floppy drive [the starting
+; position of display generation], the photodiode begins to "see" the IR LED even before
+; perfect alignment. It is tuned by finding the value, where the middle of the display
+; sections in Alternating Mode line up with the middle of the floppy drive.
+;
+; {5} The Pre-String Pause is the longest delay during display generation. If its value
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
@@ -179,14 +203,19 @@ cXDMSK		equ	(1<<bFLASH)-1		; Extended digit mask (incl. attributes)
 bFSHBIT		equ	2			; Flashing Char Counter's desired bit
 cFSHON		equ	1<<bFSHBIT		; Initial value of above to turn char on
 
+; Sentinel constants
+
+cNUMMOD		equ	4			; Number of different display modes
+cNUMMUS		equ	1			; Number of different music options
+
 ; Flag bit constants
 
 bSHORTB		equ	0			; Short Button Press Event flag's bit#
 bLONGB		equ	1			; Long Button Press Event flag's bit#
 bCANSHT		equ	2			; Cancel Short Button flag's bit#
 bFROZEN		equ	3			; Frozen Clock Condition flag's bit#
-bFIRMWR		equ	4			; Firmware Info Condition flag's bit#
-bCARTST		equ	5			; Carousel Test Condition flag's bit#
+bDEVINF		equ	4			; Device Info Condition flag's bit#
+bQUIDLE		equ	5			; Index Hole Quits Idle flag's bit#
 
 cBUTMSK		equ	b'11111100'		; Mask to reset Button Press Event flags
 
@@ -195,9 +224,10 @@ cBUTMSK		equ	b'11111100'		; Mask to reset Button Press Event flags
 bINDEXH		equ	0			; Index Hole input's bit# (PORTB)
 bBUTTON		equ	1			; Control Button input's bit# (PORTB)
 bINISR		equ	2			; In ISR output's bit# (PORTB)
-b1224H		equ	3			; 12/24-hour Selector input's bit# (PORTB)
+b1224H		equ	3			; 12/24-hr Selector input's bit# (PORTB)
 bBEEPER		equ	4			; Beeper output's bit# (PORTB)
 cBPMSK		equ	1<<bBEEPER		; Beeper output's bit mask
+bIDLE		equ	5			; Idle output's bit#
 
 
 ;==== Variables ========================================================================
@@ -212,23 +242,23 @@ vFlags		equ	0x0E			; System flags
 ;
 ; vDspMod: Determines the Display Mode ("Mode" for short)
 ;
-;   0-Scrolling Mode, 255-Stationary Mode
+;   0 - Alternating, 1 - Left-Scroll, 2 - Stand-Scroll, 3 - Right-Scroll
 ;
 ; vSetPtr: Determines the Operating State ("State" for short)
 ;
-;   0-Running State, Non0-Setting State [address of clock variable being set]
+;   0 - Running State, Non0 - Setting State [address of clock variable being set]
 ;
 ; vFlags:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         - - C W F X G T
+;         - - I D F X G T
 ;
-;         C: Carousel Test Condition flag
-;         W: Firmware Info Condition flag
-;         F: Frozen Clock Condition flag
-;         X: Cancel Short Button Press Event flag
-;         G: Long Button Press Event flag
-;         T: Short Button Press Event flag
+;         T (0): Short Button Press Event flag
+;         G (1): Long Button Press Event flag
+;         X (2): Cancel Short Button Press Event flag
+;         F (3): Frozen Clock Condition flag
+;         D (4): Device Info Condition flag
+;         I (5): Index Hole Quits Idle flag
 
 
 ; Clock Memory (In display order)
@@ -313,7 +343,7 @@ vGenCtr		equ	0x36			; Generic loop counter
 vBpCtr		equ	0x37			; Beeper half-period counter [iter]
 vBpWid		equ	0x38			; Beeper half-period width [iter]
 vBpOCtr		equ	0x39			; Beeper octave counter
-vMsType		equ	0x40			; Music type (0-Random, 1-JetSet)
+vMsType		equ	0x40			; Music type (0 - None, 1 - Time-chirp)
 vMsTPtr		equ	0x41			; Music current tune pointer
 						; - Chirpie: Display Buffer
 						; - Tune: Tune table
@@ -404,7 +434,7 @@ DayLut		addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Number of half-period iterations (not considering octave downshift) [iter]
 
 SoundLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	0			; 0: C =! 256
+		retlw	0			; 0: C = 256
 		retlw	228			; 1: D
 		retlw	203			; 2: E
 		retlw	171			; 3: G
@@ -423,7 +453,8 @@ SoundLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		errorlevel -302			; Disable msg 302 ("Not in bank 0")
 		clrf	TRISA			; PortA: All output
-		Movlf	b'11111011',TRISB	; PortB: Bit 2: output, all other: input
+		Movlf	b'11111011',TRISB	; PortB: Bit 2 & 5: output, rest: input
+						; *** Bit 5 is input until circuit board is confirmed to be OK ***
 		bcf	OPTION_REG,NOT_RBPU	; Turn on PortB's weak pullups
 		bcf	OPTION_REG,PSA		; Prescaler assigned to Timer0
 		bsf	OPTION_REG,PS2		; Prescaler: 1:256
@@ -441,7 +472,7 @@ Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 
 ; Initialize variables
 
-		clrf	vDspMod			; Display Mode = Scrolling
+		Movlf	1,vDspMod		; Display Mode = Left-Scroll
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
 
@@ -449,16 +480,38 @@ Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		Movlf	cTCKCOR,vCorTck		; Tick Correction
 		clrf	vButTck			; Button Hold Tick Counter
 
-		Movlf	pDspBuf,vBpDPtr		; Display Buffer beeping pointer
+		clrf	vBpCtr			; Beeper half-period counter
 		Movlf	cBPOCT,vBpOCtr		; Beeper octave downshift
+		clrf	vMsType			; Music Type = None
+;		Movlf	1,vMsType
+		Movlf	pDspBuf,vMsTPtr		; Music tune pointer (prep for Chirpie)
 
-		Jclr	PORTB,bBUTTON,ShowFirm	; HIJACK boot if button pressed
+		Jset	PORTB,bBUTTON,NormBoot	; Button is not pressed - normal boot
 		
+; The "hijacked" main program to show device info until next button press
+
+		call	PreloadDevInf		; Preload Clock memory w/ device info
+		bsf	vFlags,bDEVINF		; Indicate the Device Info Condition
+		
+; Device Info Loop (Borrow the bSHORTB flag)
+
+DevInfLoop	Jset	vFlags,bSHORTB,OrigRls	; Original button already released?
+		skipclr	PORTB,bBUTTON		; Nope! Button is still being pressed?
+		bsf	vFlags,bSHORTB		; Nope! Indicate first release
+		goto	DoneOrig		; End of "original button still pressed"
+OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
+DoneOrig	call	PrintTime		; Device info -> Display Buffer
+		call	OutputBuff		; Display Buffer -> Nixie
+		goto	DevInfLoop		; Device Info Loop iteration done
+QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
+		bcf	vFlags,bDEVINF		; Cancel the Device Info Condition
+		Point	10			; Short delay to kill any button bounce
+
 ; Normal boot
 
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		clrf	vFshCtr			; Reset the Flashing Character Counter
-;		bsf	vFlags,bFROZEN		; Freeze the clock [it became "Dizzy"]
+		bsf	vFlags,bFROZEN		; Freeze the clock [it became "Dizzy"]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
 		bsf	INTCON,T0IE		; Enable Timer0 Interrupt
 
@@ -469,32 +522,11 @@ MainLoop	call	IsScroll		; Display is scrollong?
 WaitIdxH	Jset	PORTB,bINDEXH,WaitIdxH	; Spinning loop: wait for the Index Hole
 SkipIdxH	call	PrintTime		; Time Memory -> Display Buffer
 		call	OutputBuff		; Display Buffer -> Nixie
-		goto	MainLoop		; Main Loop done
+		goto	MainLoop		; Main Loop iteration done
 
 ; Note: In this very simple case, there is no need to hook up the detection of the Index
-; Hole [i.e., the passing of the IR LED] to an interrupt.
+; Hole [i.e., the passing of the IR LED under the photodiode] to an interrupt.
 
-; The "hijacked" main program to start the Firmware Info Condition
-
-ShowFirm	call	PreloadFirm		; Preload Clock memory w/ firmware info
-		bsf	vFlags,bFIRMWR		; Indicate Firmware Info Condition
-		skipset	PORTB,bINDEXH		; Is the IR LED also being seen?
-		bsf	vFlags,bCARTST		; Yepp! Special Carousel Test Condition
-		
-; Firmaware Display Main Loop (Borrow the bSHORTB flag)
-
-FirmLoop	Jset	vFlags,bSHORTB,OrigRls	; Original button already released?
-		skipclr	PORTB,bBUTTON		; Nope! Button is still being pressed?
-		bsf	vFlags,bSHORTB		; Nope! Indicate first release
-		goto	DoneOrig		; End of "original button still pressed"
-OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
-DoneOrig	call	PrintTime		; Firmware info -> Display Buffer
-		call	OutputBuff		; Display Buffer -> Nixie
-		goto	FirmLoop		; Firmware Loop done
-QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
-		bcf	vFlags,bFIRMWR		; Cancel Firmware Info Condition
-		Point	10			; Short delay to kill any button bounce
-		goto	NormBoot		; Button released - back to normal boot
 
 
 ;==== Main code subroutines ============================================================
@@ -512,26 +544,27 @@ PreloadClk	Movlf	23,vHour
 		return
 
 	
-;------ Preload the Clock Memory with firmware information
+;------ Preload the Clock Memory with device into
 
-PreloadFirm	Movlf	3,vHour			; Version# [major.minor.subminor]
-		Movlf	0,vMin
+PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
+		Movlf	1,vMin
 		Movlf	0,vSec
-		Movlf	4,vMonth		; Release date
-		Movlf	8,vDay
-		Movlf	13,vYear
+		Movlf	1,vMonth		; Required minimum hardware version#
+		Movlf	3,vDay
+		Movlf	0,vYear
 		return
 
 	
-;------ Determine if the display is scrolling
+;------ Determine the display's behavior
 
-; Output: Z=0 (NZ): Not scrolling, Z=1 (Z): Scrolling
+; Output: Z=0 (NZ): Not Scrolling, Z=1 (Z): Scrolling
 
-IsScroll	movf	vDspMod,W		; Display Mode: Stationary?
-		iorwf	vSetPtr,W		; Operation State: Setting?
-		Retnz				; If either of the above, not scrolling
+IsScroll	tst	vDspMod			; Display Mode = Alternating?
+		Jz	NoScroll		; Yepp! Not Scrolling
+		tst	vSetPtr			; Operation State = Setting?
+		Retnz				; Yepp! Not Scrolling
 		skipclr	vFlags,bFROZEN		; Clock is in Frozen Condition?
-		bcf	STATUS,Z		; Yepp! Not scrolling
+NoScroll	bcf	STATUS,Z		; Yepp! Not Scrolling
 		return				; Nope! Scrolling
 
 
@@ -550,11 +583,12 @@ PrintLoop	call	PrintNum		; Print the value
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
 		bsf	pDspMin+1,bDP		; Decimal point after minutes
-		Jclr	vFlags,bFIRMWR,NoFirm	; 1. Firmware Info Condition
-		bsf	pDspHr,bSUPZ		; "Time" values leading 0 suppress
-		bsf	pDspMin,bSUPZ
-		bsf	pDspSec,bSUPZ
-NoFirm		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
+		Jclr	vFlags,bDEVINF,NoDevInf	; 1. Device Info Condition
+		bsf	pDspHr,bSUPZ		; FW major value leading 0 suppressed
+		bsf	pDspMin,bSUPZ		; FW minor value leading 0 suppressed
+		bsf	pDspSec,bSUPZ		; FW subminor value leading 0 suppressed
+		bsf	pDspYr,bSUPZ		; HW subminor value leading 0 suppressed
+NoDevInf	bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
 		bsf	pDspDay,bSUPZ		; Day  value leading 0 suppressed
 		Jclr	PORTB,b1224H,Done12	; 2. The 12-hour notation
 		bsf	pDspHr,bSUPZ		; Hour value leading 0 suppressed
@@ -607,7 +641,7 @@ DoneDiv		addwf	vCurNum,F		; Tens->vCurTen, Ones->vCurNum
 ;         vDspPtr = Current position in the Display Buffer to write into
 ; Output: vDspPtr points to the next position
 
-; Note: Terminology: the clock is DIZZY after quitting the Setting State, in which the
+; Terminology note: The clock is DIZZY after quitting the Setting State, in which the
 ; seconds have been changed, therefore the clock is in Frozen condition. A single button
 ; press snaps the clock out of dizziness, and a brand new full second is started.
 
@@ -630,47 +664,52 @@ OutputBuff	Movlf	pDspBuf,vDspPtr		; vDspPtr = &pDspBuf; Who to print 1st?
 		tst	vSetPtr			; Setting State?
 		Jz	NoSet			; Nope! The bit more complicated case
 		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Second half is being set?
-		Jlt	DoneRev			; Nope! Keep first half in front
+		Jlt	DoneRvs			; Nope! Keep first half in front
 		Movlf	pDspBuf+6,vDspPtr	; Yepp! Put second half to front
-		goto	DoneRev			; Done calculating display reversal
-NoSet		Jset	vFlags,bFROZEN,DoneRev	; No set: Time first if 1) clock Frozen
-		tst	vDspMod			; 2) Scrolling Mode
-		Jz	DoneRev
+		goto	DoneRvs			; Done calculating display reversal
+NoSet		Jset	vFlags,bFROZEN,DoneRvs	; No set: Time first if 1) clock Frozen
+		tst	vDspMod			; 2) display is not Alternating
+		Jnz	DoneRvs			; Done with reversing the two sides
 		incf	vSec,W			; Increment: put 59->00 transit to front
 		andlw	0x02			; Find the appropriate bit
-		Jz	DoneRev			; 3) desired 2-second interval is on
+		Jz	DoneRvs			; 3) desired 2-second interval is on
 		Movlf	pDspBuf+6,vDspPtr	; Yepp! Put second half to front
-DoneRev		call	IsScroll		; Display is scrolling?
-		Jz	SkipPrxCorr		; Yepp! Skip the LED Parallax Correction
-		Point	cPRXCOR			; Issue the LED Parallax Correction
+DoneRvs		call	IsScroll		; Display is Scrolling?
+		Jz	SkipPrxCorr		; Yepp! Start displaying
+		Point	cPRXCOR			; Issue the Idx Hole parallax correction
 SkipPrxCorr	call	OutputSide		; Output Front Side
 		Point	cISP			; Inter-Side Pause
 		Cmpfl	vDspPtr,pDspBuf+12	; Display Buffer wrap-around?
 		Jnz	NoWrap			; Nope! Do nothing
-		Movlf	pDspBuf,vDspPtr		; Reset the Display Buffer pointer
-NoWrap		call	OutputSide		; Output Back Side
-		call	IsScroll		; Display is scrolling?
-		Retnz				; Nope! Skip Post-String Pause & da rest
-		Jset	vFlags,bFIRMWR,TwoISP	; Firmware Info: 2 ISP's
-		Jset	vFlags,bCARTST,OneISP	; Carousel Test: 1 ISP
-		return				; Otherwise: 0 ISP's
-TwoISP		Point	cISP			; 2 ISP's: BACKWARD scroll (Firmware C.)
-OneISP		Point	cISP+cFUDGE		; 1 ISP: NO scroll (Quasi-stationary)
-		return				; 0 ISP's: FORWARD scroll (Normal)
+		Movlf	pDspBuf,vDspPtr		; Yepp! Reset the Display Buffer pointer
+NoWrap		call	IsScroll		; Display is Scrolling?
+		skipz				; Yepp! Index Hole does nothing
+		bsf	vFlags,bQUIDLE		; Nope! Index Hole quits Idle (*)
+		call	OutputSide		; Output Back Side
+		Point	cREVCOR			; Revolution Correction
+		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
+		Jz	OneISP			; Yepp! 1 ISP
+		Jlt	ZeroISPs		; Left-Scr: 0 ISP's; Right-Scr: 2 ISP's
+		Point	cISP			; Delay one ISP
+OneISP		Point	cISP			; Delay one ISP
+ZeroISPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
+		return
+
+; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
+; the Index Hole starts being seen before the Back Side's Post-String Pause is over.
 
 
-;------ Output Side
+;------ Output Side (excl. the Post-String Pause)
 
 ; Input:  vDspPtr = Beginning of current side in the Display Buffer
 ; Output: vDspPtr points to the position beyond current side
 ;
 ; Note: Also "sound" digits in the Display Buffer one-by-one during the Pre-String Pause
 
-OutputSide	Cmpfl	vMsType,cMUSCHP		; Music is Chirpie?
-		Jz	PlayChirpie		; Yepp! Play it
-		Cmpfl	vMsType,cMUSJSW		; Music is Jet Set Willie?
+OutputSide	tst	vMsType			; Music is off?
+		Jz	NoMusic			; Yepp! Stay silent
+		Cmpfl	vMsType,2		; Music is Jet Set Willie?
 		Jz	PlayJetSet		; Yepp! Play it
-		goto	NoMusic			; Music is off
 PlayChirpie	Movff	vMsTPtr,FSR		; Find the digit that's up for sounding
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
@@ -681,34 +720,26 @@ PlayChirpie	Movff	vMsTPtr,FSR		; Find the digit that's up for sounding
 		Jnz	SoundTune		; Nope! Don't reset the beeper pointer
 		Movlf	pDspBuf,vMsTPtr		; Yepp! Back to the start of the Display
 		goto	SoundTune		; Sound that tune
-PlayJetSet	
-SoundTune	bsf	STATUS,RP0		; SWITCH TO BANK 1
-		errorlevel -302			; Disable msg 302 ("Not in bank 0")
-		bcf	TRISB,bBEEPER		; Enable the beeper for this pause			
-		bcf	STATUS,RP0		; Switch back to Bank 0
-		Point	cPRESP			; Pre-String Pause
-;		bsf	STATUS,RP0		; SWITCH TO BANK 1
-;		bsf	TRISB,bBEEPER		; Disable beeper
-;		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
-;		bcf	STATUS,RP0		; Switch back to Bank 0
-NoMusic		call	OutputSup		; Pre-String Suppressed Digits Pause		
+PlayJetSet	goto	NoMusic			; *** To-do ***
+SoundTune	call	BeeperOn		; Turn beeper on
+NoMusic		Point	cPRESP			; Pre-String Pause
+		tst	vMsType			; Any of the tunes are playing?
+		skipnz				; Yepp! Don't turn beeper off yet
+		call	BeeperOff		; Turn beeper off (short beep)
+		call	OutputSup		; Pre-String Suppressed Digits Pause		
 		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
 		call	OutputNum		; 1st number
 		Point	cINP			; Inter-Number Pause
 		call	OutputNum		; 2nd number
 		Point	cINP			; Inter-Number Pause
 		call	OutputNum		; 3rd number
-		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
 		call	OutputSup		; Post-String Suppressed Digits Pause
-		bsf	STATUS,RP0		; SWITCH TO BANK 1
-		bsf	TRISB,bBEEPER		; Disable beeper
-		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
-		bcf	STATUS,RP0		; Switch back to Bank 0
+		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
+		Cmpfl	vMsType,1		; Music is Chirpie?
+		skipz				; Yepp! Don't turn beeper off yet
+		call	BeeperOff		; Turn beeper off (medium beep)
 		Point	cPOSTSP			; Post-String Pause
-;		bsf	STATUS,RP0		; SWITCH TO BANK 1
-;		bsf	TRISB,bBEEPER		; Disable beeper
-;		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
-;		bcf	STATUS,RP0		; Switch back to Bank 0
+		call	BeeperOff		; Turn beeper off (long beep)
 		return
 
 
@@ -724,7 +755,7 @@ OutputSup	Movff	vDspPtr,FSR		; Start of the side's Display Buffer
 SupLoop		movf	INDF,W			; Access the current digit
 		andlw	cXDMSK			; Cut the Flashing attribute
 		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
-		Jnz	NoSup			; Digit is suppressed?
+		Jnz	NoSup			; Digit is a suppressed zero?
 		Point	cHDIGP			; Yepp! Issue a Half Digit Pause
 NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
 		Djnz	vGenCtr,SupLoop		; Loop until side is over
@@ -754,21 +785,24 @@ OutputDig	movf	INDF,W			; Access the digit
 		Jclr	INDF,bFLASH,CharOn	; Character not flashing: character on
 		Jset	vFshCtr,bFSHBIT,CharOff	; Flashing bit is set: character off
 CharOn		Movff	INDF,PORTA		; Light the Nixie
-CharOff		Point	cDIGLTP			; Digit Light Pause
+CharOff		Point	cDIGLTP			; Digit Light-Up Pause
 		Movlf	cSPACE,PORTA		; Unlight the Nixie
 		Point	cDIGWP			; Digit Width Pause
 DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
-		return				; Done; YIPPEE!
+		return
  
 
-;------ Generate delay for desired carousel revolution
+;------ The most executed Idle routine - generate delay for desired carousel revolution
 
 ; Input: W = Number of points (PI/1000) of carousel revolution to delay
 
-PtDelay		movwf	vPntCtr			; Load number of points
-OuterLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
-MagniLoop	Movlf	cLPCNT,vLpCtr		; Load the delay for 1 point
-InnerLoop	decfsz	vBpCtr,F		; Beeper half-period done yet?
+PtDelay		bsf	PORTB,bIDLE		; Set the IDLE diagnostic bit
+		movwf	vPntCtr			; Load number of points
+PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
+MagniLoop	Movlf	cLPCNT,vLpCtr		; Load the number of iters for 1 point
+		Jclr	vFlags,bQUIDLE,IterLoop	; No quit upon Index Hole detection
+		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
+IterLoop	decfsz	vBpCtr,F		; Beeper half-period done yet?
 		goto	NoToggle		; Nope! Move on
 		Movff	vBpWid,vBpCtr		; Reload the beeper half-period counter
 		decfsz	vBpOCtr,F		; Beeper octave downshift done yet?
@@ -777,11 +811,28 @@ InnerLoop	decfsz	vBpCtr,F		; Beeper half-period done yet?
 		movlw	cBPMSK			; Toggle the beeper output!
 		xorwf	PORTB,F
 NoToggle	decfsz	vLpCtr,F		; 1 point passed yet?		
-		goto	InnerLoop		; Nope! Stay in loop
+		goto	IterLoop		; Nope! Stay in loop
 		decfsz	vMagCtr,F		; Magnification done yet?
 		goto	MagniLoop		; Nope! Stay in loop
 		decfsz	vPntCtr,F		; Point delay passed yet?
-		goto	OuterLoop		; Nope! Stay in loop
+		goto	PointLoop		; Nope! Stay in loop
+QuitIdle	bcf	PORTB,bIDLE		; Clear the IDLE diagnostic bit
+		return
+ 
+
+;------ Turn beeper on/off
+
+BeeperOff	clrw				; W = 0 means off
+		skipz
+BeeperOn	iorlw	1			; W != 0 means on	
+		bsf	STATUS,RP0		; SWITCH TO BANK 1
+		errorlevel -302			; Disable msg 302 ("Not in bank 0")
+		skipnz				; Beeper to be turned on?
+		bsf	TRISB,bBEEPER		; Nope! Turn beeper off
+		skipz				; Beeper to be turned off?
+		bcf	TRISB,bBEEPER		; Nope! Turn beeper on
+		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
+		bcf	STATUS,RP0		; Switch back to Bank 0
 		return
 
 
@@ -791,7 +842,7 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		
 ;---- Timer0 interrupt -----------------------------------------------------------------
 
-		bsf	PORTB,bINISR		; Set the In ISR bit
+		bsf	PORTB,bINISR		; Set the In ISR diagnostic bit
 		movwf	vWTmp			; Save W
 		Movff	STATUS,vStsTmp		; Save STATUS
 		Movff	FSR,vFsrTmp		; Save FSR (not needed; just in case)
@@ -807,7 +858,7 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		Movff	vStsTmp,STATUS		; Restore STATUS
 		swapf	vWTmp,F			; Restore W (Tricky solution needed:
 		swapf	vWTmp,W			;   "movf vwTmp,W" affects the Z flag!)
-		bcf	PORTB,bINISR		; Clear the In ISR bit
+		bcf	PORTB,bINISR		; Clear the In ISR diagnostic bit
 
 		retfie
 
@@ -936,7 +987,7 @@ CntPress	Cmpfl	vButTck,cLNGTCK		; Long enough for Long Button event?
 NoLong		Cmpfl	vButTck,255		; About to max out on Button Tick?
 		skipz				; Yepp! Do not increment Button Tick
 		incf	vButTck,F		; Nope! Increment Button Tick
-		return				; Done
+		return
 
 ; 2. Button not pressed
 NoPress		tst	vButTck			; End of a button press?
@@ -945,7 +996,7 @@ NoPress		tst	vButTck			; End of a button press?
 		skipset	vFlags,bCANSHT		; Short Button Event needs cancel?
 		bsf	vFlags,bSHORTB		; Nope! Generate the event
 		bcf	vFlags,bCANSHT		; Clear the Short Butt Event Cancel flag
-		return				; Done
+		return
 
 
 ;------ Infamy #3: The button processing state machine
@@ -959,12 +1010,15 @@ ProcButton	tst	vSetPtr			; Setting State?
 		
 ; 1. Running State
 		Jclr	vFlags,bSHORTB,RunLong	; 1.1 Short Button event
-		comf	vDspMod,F		; Toggle the Display Mode
-		return				; Done
+		incf	vDspMod,F		; Advance the Display Mode
+		Cmpfl	vDspMod,cNUMMOD		; Max reached?
+		Retnc				; Nope! Done
+		clrf	vDspMod			; Yepp! Reset counter
+		return
 		
 RunLong		Retclr	vFlags,bLONGB		; 1.2 Long Button event
 		Movlf	pClkMem,vSetPtr		; Setting State (vSetPrt=Clk Mem start)
-		return				; Done
+		return
 		
 ; 2. Setting State
 InSetting	Jclr	vFlags,bSHORTB,SetLong	; 2.1 Short Button event
