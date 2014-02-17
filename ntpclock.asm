@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.1.0
+; NTPClock Firmware v3.2.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -93,7 +93,8 @@
 cFCLK		equ	19660800		; Clock cycles per second [Hz = cc/s]
 cFROT		equ	360			; Carousel rotation speed [rev/min]
 cFSCR		equ	4			; Display scroll speed [rev/min]
-cLNGTM		equ	750			; Long Button Press time [ms]
+cLNGTM		equ	750			; Long Button Press min time [ms]
+cDBLTM		equ	200			; Double Click depress max time [ms]
 cBPOCT		equ	3			; Beeper octave downshift
 
 ; Time Magnifier (for DEBUG reasons)
@@ -130,7 +131,8 @@ cSCRGAP		equ	cPTPREV*cFSCR/cFROT	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
 						; 2*arctg(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTCKPS		equ	cICPS/cTMRPSC/cTMRCNT	; Ticks per sec (truncated!) [tick/s]
-cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Ticks until a Long Button Event [tick]
+cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
+cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
 
 ; Point delay constants for display layout [point]
 
@@ -145,7 +147,7 @@ cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
 cISP		equ	cSCRGAP			; Inter-Side Pause
 cPOSTSP		equ	cPRESP-cISP		; Post-String Pause
-cREVCOR		equ	4			; Revolution Correction {3}
+cREVCOR		equ	2			; Revolution Correction {3}
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
  		
  		if	cPRESP>255 		; Check the value of cPRESP {5}
@@ -206,18 +208,18 @@ cFSHON		equ	1<<bFSHBIT		; Initial value of above to turn char on
 ; Sentinel constants
 
 cNUMMOD		equ	4			; Number of different display modes
-cNUMMUS		equ	1			; Number of different music options
+cNUMMUS		equ	2			; Number of different music options
 
 ; Flag bit constants
 
-bSHORTB		equ	0			; Short Button Press Event flag's bit#
-bLONGB		equ	1			; Long Button Press Event flag's bit#
-bCANSHT		equ	2			; Cancel Short Button flag's bit#
-bFROZEN		equ	3			; Frozen Clock Condition flag's bit#
-bDEVINF		equ	4			; Device Info Condition flag's bit#
-bQUIDLE		equ	5			; Index Hole Quits Idle flag's bit#
-
-cBUTMSK		equ	b'11111100'		; Mask to reset Button Press Event flags
+bBUTST		equ	0			; Button State flag's bit#
+bSHORTB		equ	1			; Short Button Event flag's bit#
+bLONGB		equ	2			; Long Button Event flag's bit#
+bDBLCLK		equ	3			; Double Click flag's bit#
+bCANSHT		equ	4			; Cancel Short Button Event flag's bit#
+bFROZEN		equ	5			; Frozen Clock Condition flag's bit#
+bDEVINF		equ	6			; Device Info Condition flag's bit#
+bQUIDLE		equ	7			; Index Hole Quits Idle flag's bit#
 
 ; I/O port bit constants
 
@@ -251,14 +253,16 @@ vFlags		equ	0x0E			; System flags
 ; vFlags:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         - - I D F X G T
+;         I N F X D L S B
 ;
-;         T (0): Short Button Press Event flag
-;         G (1): Long Button Press Event flag
-;         X (2): Cancel Short Button Press Event flag
-;         F (3): Frozen Clock Condition flag
-;         D (4): Device Info Condition flag
-;         I (5): Index Hole Quits Idle flag
+;         B (0): Button State flag (1 = pressed)
+;         S (1): Short Button Event flag
+;         L (2): Long Button Event flag
+;         D (3): Double Click flag
+;         X (4): Cancel Short Button Event flag
+;         F (5): Frozen Clock Condition flag
+;         N (6): Device Info Condition flag
+;         I (7): Index Hole Quits Idle flag
 
 
 ; Clock Memory (In display order)
@@ -343,7 +347,7 @@ vGenCtr		equ	0x36			; Generic loop counter
 vBpCtr		equ	0x37			; Beeper half-period counter [iter]
 vBpWid		equ	0x38			; Beeper half-period width [iter]
 vBpOCtr		equ	0x39			; Beeper octave counter
-vMsType		equ	0x40			; Music type (0 - None, 1 - Time-chirp)
+vMsType		equ	0x40			; Music type (0=Silence, 1=Time-chirp)
 vMsTPtr		equ	0x41			; Music current tune pointer
 						; - Chirpie: Display Buffer
 						; - Tune: Tune table
@@ -389,10 +393,12 @@ Point		macro	mcLit
 
 		goto	IntHdl			; Jump to the handler
 		
-;---- Days Per Month lookup ------------------------------------------------------------
+;---- Lookup tables --------------------------------------------------------------------
 
-; Note: Calculated GOTO table must not span a 256-word boundary, so this subroutine
-; better be kept here at the beginning of the code!
+; Note: Calculated GOTO table must not span a 256-word boundary, so these subroutines
+; are better be kept here at the beginning of the code!
+
+;---- Days Per Month lookup
 
 ; Input:  W = Days Per Month Lookup Table offset
 ; Output: W = Number of days in month + 1
@@ -425,10 +431,7 @@ DayLut		addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	31			;   November: 30
 		retlw	32			;   December: 31
 		
-;---- Digit to Sound Half-Period Width lookup ------------------------------------------
-
-; Note: Calculated GOTO table must not span a 256-word boundary, so this subroutine
-; better be kept here at the beginning of the code!
+;---- Digit to Sound Half-Period Width lookup
 
 ; Input:  W = Digit value
 ; Output: W = Number of half-period iterations (not considering octave downshift) [iter]
@@ -450,7 +453,10 @@ SoundLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 
 ; HW configuration errands
 
-Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
+Start		Movlf	cSPACE,PORTA		; Blank the Nixie
+		clrf	PORTB			; Clear [those few outputs of] Port B
+		
+		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		errorlevel -302			; Disable msg 302 ("Not in bank 0")
 		clrf	TRISA			; PortA: All output
 		Movlf	b'11111011',TRISB	; PortB: Bit 2 & 5: output, rest: input
@@ -458,21 +464,17 @@ Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		bcf	OPTION_REG,NOT_RBPU	; Turn on PortB's weak pullups
 		bcf	OPTION_REG,PSA		; Prescaler assigned to Timer0
 		bsf	OPTION_REG,PS2		; Prescaler: 1:256
-		bsf	OPTION_REG,PS1		; #### Note: Must reflect cTMRPSC!
+		bsf	OPTION_REG,PS1		; #### Note: Must be synced w/ cTMRPSC!
 		bsf	OPTION_REG,PS0
 		bcf	OPTION_REG,T0CS		; Start Timer0
 		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
 		bcf	STATUS,RP0		; Switch back to Bank 0
-
-		Movlf	cSPACE,PORTA		; Blank the Nixie
-		clrf	PORTB			; Clear Port B (that 1 output... :-) )
 
 		Movlf	cTMRRLD,TMR0		; Load Timer0 (Super-nitpicky ;-) )
 		Point	10			; Short delay to get the IR LED ready
 
 ; Initialize variables
 
-		Movlf	1,vDspMod		; Display Mode = Left-Scroll
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
 
@@ -482,8 +484,7 @@ Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 
 		clrf	vBpCtr			; Beeper half-period counter
 		Movlf	cBPOCT,vBpOCtr		; Beeper octave downshift
-		clrf	vMsType			; Music Type = None
-;		Movlf	1,vMsType
+		clrf	vMsType			; Music Type = Silence
 		Movlf	pDspBuf,vMsTPtr		; Music tune pointer (prep for Chirpie)
 
 		Jset	PORTB,bBUTTON,NormBoot	; Button is not pressed - normal boot
@@ -491,6 +492,7 @@ Start		bsf	STATUS,RP0		; SWITCH TO BANK 1
 ; The "hijacked" main program to show device info until next button press
 
 		call	PreloadDevInf		; Preload Clock memory w/ device info
+		Movlf	3,vDspMod		; Display Mode = Right-Scroll
 		bsf	vFlags,bDEVINF		; Indicate the Device Info Condition
 		
 ; Device Info Loop (Borrow the bSHORTB flag)
@@ -510,6 +512,7 @@ QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 ; Normal boot
 
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
+		Movlf	1,vDspMod		; Display Mode = Left-Scroll
 		clrf	vFshCtr			; Reset the Flashing Character Counter
 		bsf	vFlags,bFROZEN		; Freeze the clock [it became "Dizzy"]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
@@ -547,7 +550,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	1,vMin
+		Movlf	2,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -706,26 +709,24 @@ ZeroISPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
 ;
 ; Note: Also "sound" digits in the Display Buffer one-by-one during the Pre-String Pause
 
-OutputSide	tst	vMsType			; Music is off?
-		Jz	NoMusic			; Yepp! Stay silent
-		Cmpfl	vMsType,2		; Music is Jet Set Willie?
-		Jz	PlayJetSet		; Yepp! Play it
-PlayChirpie	Movff	vMsTPtr,FSR		; Find the digit that's up for sounding
+OutputSide	call	BeeperOff		; Start by assuming that beeper is off
+		Cmpfl	vMsType,2		; Music is a tune?
+		Jge	PlayTune		; Yepp! Play it
+		Movff	vMsTPtr,FSR		; Nupp! Chirpie - "Play" the next digit
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
 		call	SoundLut		; Look up the digit's sound's width
 		movwf	vBpWid			; Apply it to the current sound
 		incf	vMsTPtr,F		; Advance to the next digit for sounding
 		Cmpfl	vMsTPtr,pDspBuf+12	; Reached the end of the Display Buffer?
-		Jnz	SoundTune		; Nope! Don't reset the beeper pointer
+		Jnz	SoundNote		; Nope! Don't reset the beeper pointer
 		Movlf	pDspBuf,vMsTPtr		; Yepp! Back to the start of the Display
-		goto	SoundTune		; Sound that tune
-PlayJetSet	goto	NoMusic			; *** To-do ***
-SoundTune	call	BeeperOn		; Turn beeper on
-NoMusic		Point	cPRESP			; Pre-String Pause
-		tst	vMsType			; Any of the tunes are playing?
-		skipnz				; Yepp! Don't turn beeper off yet
-		call	BeeperOff		; Turn beeper off (short beep)
+		goto	SoundNote		; Sound that note
+PlayTune	goto	SoundNote		; *** To-do ***
+SoundNote	tst	vMsType			; Music type is 0 (Silence)?
+		skipz				; Yepp! Do not turn beeper on
+		call	BeeperOn		; Turn beeper on
+		Point	cPRESP			; Pre-String Pause
 		call	OutputSup		; Pre-String Suppressed Digits Pause		
 		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
 		call	OutputNum		; 1st number
@@ -735,11 +736,11 @@ NoMusic		Point	cPRESP			; Pre-String Pause
 		call	OutputNum		; 3rd number
 		call	OutputSup		; Post-String Suppressed Digits Pause
 		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
-		Cmpfl	vMsType,1		; Music is Chirpie?
-		skipz				; Yepp! Don't turn beeper off yet
-		call	BeeperOff		; Turn beeper off (medium beep)
+;		Cmpfl	vMsType,1		; Music is Chirpie?
+;		skipz				; Yepp! Don't turn beeper off yet
+;		call	BeeperOff		; Turn beeper off (medium beep)
 		Point	cPOSTSP			; Post-String Pause
-		call	BeeperOff		; Turn beeper off (long beep)
+;		call	BeeperOff		; Turn beeper off (long beep)
 		return
 
 
@@ -798,6 +799,8 @@ DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
 
 PtDelay		bsf	PORTB,bIDLE		; Set the IDLE diagnostic bit
 		movwf	vPntCtr			; Load number of points
+		tst	vPntCtr			; Is it 0?
+		Jz	QuitIdle		; Yepp! Get out of here quick
 PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
 MagniLoop	Movlf	cLPCNT,vLpCtr		; Load the number of iters for 1 point
 		Jclr	vFlags,bQUIDLE,IterLoop	; No quit upon Index Hole detection
@@ -847,8 +850,6 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		Movff	STATUS,vStsTmp		; Save STATUS
 		Movff	FSR,vFsrTmp		; Save FSR (not needed; just in case)
 
-		movlw	cBUTMSK			; Reset the Button Press Event flags
-		andwf	vFlags,F
 		call	AdvClock		; Advance the clock
 		call	ReadButton		; Read button status & generate events
 		call	ProcButton		; Process the button events
@@ -966,42 +967,64 @@ DayRoll		movlw	0x03			; Mask 0000 0011
 
 ;------ The button status detection state machine
 
-; Note: Generates Short & Long Button events for use by ProcButton; however, takes care
-; of unfreezing the clock & resetting the Ticks Per Sec counter "in house".
+; Generates the button events for ProcButton; however, takes care of unfreezing the
+; clock & resetting the Ticks Per Sec counter "in house".
+;
+; Button events:
+;  - Short Button Event (vFlags:bSHORTB): Generated upon the release of a short press
+;  - Long Button Event (vFlags:bLONGB): Generated upon a press reaching the duration
+;    (cLNGTCK) that qualifies it as a long press
+;
+; Persistent states:
+;  - Double Click (vFlags:bDBLCLK): Set upon the start of a press that followed the
+;    release of a previous press within a sufficiently short time (cDBCTCK); consumed
+;    upon the processing of the next button event
+;  - Cancel Short Button Event (vFlags:bCANSHT): Set upon the generation of a Long
+;    button event or clock unfreeze; consumed upon the next button release
 
-ReadButton	Jset	PORTB,bBUTTON,NoPress	; Jump if button not pressed [grounded]
+ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
+		bcf	vFlags,bLONGB
+
+		Jset	PORTB,bBUTTON,NoPress	; If button not pressed, proceed as such
 
 ; 1. Button pressed
-		tst	vButTck			; Start of button press?
-		Jnz	CntPress		; Nope! Keep counting press duration
+		Jset	vFlags,bBUTST,CntPress	; If not start of a press, keep counting
+		Cmpfl	vButTck,cDBLTCK		; Press qualifies for a Double Click?
+		skipge				; Nope! Do nothing
+		bsf	vFlags,bDBLCLK		; Yepp! Set the Double Click flag
+		clrf	vButTck			; Reset the Button Tick counter
 		tst	vSetPtr			; In Setting State right now?
-		Jnz	CntPress		; Yepp! Start of press meaningless
+		Jnz	CntPress		; Yepp! No action upon start of press
 		Jclr	vFlags,bFROZEN,CntPress	; If clock is not Frozen, -"-
 		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec counter
 		bcf	vFlags,bFROZEN		; Unfreeze the clock
-		bsf	vFlags,bCANSHT		; Cancel Short Button event
-CntPress	Cmpfl	vButTck,cLNGTCK		; Long enough for Long Button event?
+		bsf	vFlags,bCANSHT		; Cancel Short Button Event
+CntPress	bsf	vFlags,bBUTST		; Save the current button state
+		Cmpfl	vButTck,cLNGTCK		; Long enough for Long Button event?
 		Jnz	NoLong			; Nope! Move on
 		bsf	vFlags,bLONGB		; Yepp! Set the event's flag
-		bsf	vFlags,bCANSHT		; Cancel Short Button event
+		bsf	vFlags,bCANSHT		; Cancel Short Button Event
 NoLong		Cmpfl	vButTck,255		; About to max out on Button Tick?
 		skipz				; Yepp! Do not increment Button Tick
 		incf	vButTck,F		; Nope! Increment Button Tick
 		return
 
 ; 2. Button not pressed
-NoPress		tst	vButTck			; End of a button press?
-		Retz				; Nope! Do nothing
-		clrf	vButTck			; Yepp! Reset the Button Tick Counter
+NoPress		Jclr	vFlags,bBUTST,CntDeprss	; If not end of a press, keep counting
+		clrf	vButTck			; Reset the Button Tick counter
 		skipset	vFlags,bCANSHT		; Short Button Event needs cancel?
 		bsf	vFlags,bSHORTB		; Nope! Generate the event
 		bcf	vFlags,bCANSHT		; Clear the Short Butt Event Cancel flag
+CntDeprss	bcf	vFlags,bBUTST		; Save the current button state
+		Cmpfl	vButTck,255		; About to max out on Button Tick?
+		skipz				; Yepp! Do not increment Button Tick
+		incf	vButTck,F		; Nope! Increment Button Tick
 		return
 
 
 ;------ Infamy #3: The button processing state machine
 
-; Interprets the Short & Long Button events generated by ReadButton.
+; Interprets the button indications generated by ReadButton.
 
 ; Note: The Short & Long Button events are mutually exclusive [per definition]!
 
@@ -1009,19 +1032,42 @@ ProcButton	tst	vSetPtr			; Setting State?
 		Jnz	InSetting		; Yepp! The nastier case...
 		
 ; 1. Running State
-		Jclr	vFlags,bSHORTB,RunLong	; 1.1 Short Button event
+		Jclr	vFlags,bSHORTB,RunLong	; Short Button Event? Try Long if not
+
+; 1.1 Short Button Event
+		Jset	vFlags,bDBLCLK,DblClk	; If Double Click, proceed as such
+
+; 1.1.1 Single Click
 		incf	vDspMod,F		; Advance the Display Mode
 		Cmpfl	vDspMod,cNUMMOD		; Max reached?
-		Retnc				; Nope! Done
-		clrf	vDspMod			; Yepp! Reset counter
+		skiplt				; Nope! Do nothing
+		clrf	vDspMod			; Yepp! Reset the Display Mode
 		return
-		
-RunLong		Retclr	vFlags,bLONGB		; 1.2 Long Button event
+
+; 1.1.2 Double Click
+DblClk		bcf	vFlags,bDBLCLK		; Clear Double Click
+		movlw	cNUMMOD			; Undo the Display Mode increment
+		tst	vDspMod			; Currently at min?
+		skipnz				; Nope! Do nothing
+		movwf	vDspMod			; Yepp! Wrap around the Display Mode
+		decf	vDspMod,F		; Decrement the Display Mode
+		incf	vMsType,F		; Advance the Music Type
+		Cmpfl	vMsType,cNUMMUS		; Max reached?
+		skiplt				; Nope! Do nothing
+		clrf	vMsType			; Yepp! Reset the Music Type
+		return
+
+RunLong		Retclr	vFlags,bLONGB		; Long Button event? Return if not
+; 1.2 Long Button event
+		bcf	vFlags,bDBLCLK		; Clear Double Click (not used here)
 		Movlf	pClkMem,vSetPtr		; Setting State (vSetPrt=Clk Mem start)
 		return
 		
 ; 2. Setting State
-InSetting	Jclr	vFlags,bSHORTB,SetLong	; 2.1 Short Button event
+InSetting	Jclr	vFlags,bSHORTB,SetLong	; Short Button Event? Try Long if not
+
+; 2.1 Short Button Event
+		bcf	vFlags,bDBLCLK		; Clear Double Click (not used here)
 		clrf	vFshCtr			; Reset Flash Counter to light up number
 		Cmpfl	vSetPtr,vHour		; Setting minutes?
 		Jz	IncHour			; Yepp! Return through adjusting value
@@ -1035,7 +1081,10 @@ InSetting	Jclr	vFlags,bSHORTB,SetLong	; 2.1 Short Button event
 		Jz	IncDay			; Yepp! Return through adjusting value
 		goto	IncYear			; Return through adjusting year value
 
-SetLong		Retclr	vFlags,bLONGB		; 2.2 Long Button event
+SetLong		Retclr	vFlags,bLONGB		; Long Button event? Return if not		
+
+; 2.2 Long Button event
+		bcf	vFlags,bDBLCLK		; Clear Double Click (not used here)
 		Movlf	cFSHON,vFshCtr		; Set Flash Counter to blank number
 		incf	vSetPtr,F		; Move on to the next value
 		Cmpfl	vSetPtr,pClkMem+6	; Moved beyond last value to set?
