@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.2.0
+; NTPClock Firmware v3.3.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -36,7 +36,7 @@
 ; PORTB 1 (I): Control Button input (active low)
 ; PORTB 2 (O): In ISR output [diagnostics]
 ; PORTB 3 (I): 12/24-hour Selector input (low: 24h)
-; PORTB 4 (O): Beeper output
+; PORTB 4 (O): Buzzer output
 ; PORTB 5 (O): Idle output [diagnostics]
 ; PORTB 6 (I): <Unused>  [ICSP Clock]
 ; PORTB 7 (I): <Unused>  [ICSP Data]
@@ -90,22 +90,29 @@
 
 ; Customization constants
 
-cFCLK		equ	19660800		; Clock cycles per second [Hz = cc/s]
-cFROT		equ	360			; Carousel rotation speed [rev/min]
 cFSCR		equ	4			; Display scroll speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
-cBPOCT		equ	3			; Beeper octave downshift
+cDRMUL		equ	2			; Note duration multiplier {A}			
+cBZFDSH		equ	7			; Buzzer frequency downshift {B}
+
+; Sentinel constants
+
+cNUMMOD		equ	4			; Number of different display modes
+cNUMMUS		equ	3			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
 cMAGCNT		equ	1			; Normal-1, Debug-64 (0.5 sec/digit)
 
-; Fundamental constants (Note: iter = PtDelay InnerLoop's non-quitting iteration)
+; Inherent constants
 
+cFCLK		equ	19660800		; Clock cycles per second [cc/s]
+cFROT		equ	360			; Carousel rotation speed [rev/min]
 cCCPIC		equ	4			; Clock cycles per instr. cycle [cc/ic]
-cPTPREV		equ	2000			; Points per revolution [point/rev]
 cICPITR		equ	6			; Instr. cycles per iter [ic/iter] {1}
+cPTPREV		equ	2000			; Points per revolution [point/rev]
+cSDPREV		equ	2			; Display sides per revolution [sd/rev]
 
 ; Geometrical constants
 
@@ -116,7 +123,7 @@ cDIGWID		equ	8			; Digit width [mm]
 ; Timing configuration & adjustment constants
 
 cTCKCOR		equ	0			; Seconds per 1 leap second (0: unused)
-cTMRPSC		equ	256			; Timer0 prescaler (Also see "####"!)
+cTMRPSC		equ	256			; Timer0 prescaler (Also see {#}!)
 cTMRCNT		equ	256			; Timer0 required count (Just max out)
 cLPCOR		equ	2			; Loop iteration correction [iter] {2}
 
@@ -128,8 +135,8 @@ cITRPS		equ	cICPS/cICPITR		; Iterations per sec [iter/s]
 cPTPS		equ	cFROT*cPTPREV/60	; Points per sec [point/s]
 cLPCNT		equ	cITRPS/cPTPS - cLPCOR	; Loop iterations per point [iter/point]
 cSCRGAP		equ	cPTPREV*cFSCR/cFROT	; Angle gap causing scroll [point]
-cDIGWAN		equ	50			; Max angle of digit width [point]
-						; 2*arctg(cDIGWID/(2*cRMIN))*cPTPREV/PI
+cDIGWAN		equ	51			; Max angle of digit width [point]
+						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTCKPS		equ	cICPS/cTMRPSC/cTMRCNT	; Ticks per sec (truncated!) [tick/s]
 cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
 cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
@@ -157,8 +164,8 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 ; Notes:
 ;
 ; {1} Number of instruction cycles along the most executed section of code [Idle-code],
-; the non-quitting, non-beeper-toggling iteration of IterLoop: 2 non-skipping decfsz's
-; (1 cycle each) and 2 goto's (2 cycles each).
+; the non-quitting, non-buzzer-toggling iteration ("iter") of IterLoop: 2 non-skipping
+; decfsz's (1 cycle each) and 2 goto's (2 cycles each).
 ;
 ; {2} Correction factor for the number of IterLoop iterations per point, accounting for
 ; all the instruction cycles not spent in the Idle-code. It is tuned by finding the
@@ -188,7 +195,6 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
 
-
 ; Character-related constants
 
 cSPACE		equ	15			; SPACE character
@@ -205,12 +211,7 @@ cXDMSK		equ	(1<<bFLASH)-1		; Extended digit mask (incl. attributes)
 bFSHBIT		equ	2			; Flashing Char Counter's desired bit
 cFSHON		equ	1<<bFSHBIT		; Initial value of above to turn char on
 
-; Sentinel constants
-
-cNUMMOD		equ	4			; Number of different display modes
-cNUMMUS		equ	2			; Number of different music options
-
-; Flag bit constants
+; vFlags bit constants
 
 bBUTST		equ	0			; Button State flag's bit#
 bSHORTB		equ	1			; Short Button Event flag's bit#
@@ -227,9 +228,114 @@ bINDEXH		equ	0			; Index Hole input's bit# (PORTB)
 bBUTTON		equ	1			; Control Button input's bit# (PORTB)
 bINISR		equ	2			; In ISR output's bit# (PORTB)
 b1224H		equ	3			; 12/24-hr Selector input's bit# (PORTB)
-bBEEPER		equ	4			; Beeper output's bit# (PORTB)
-cBPMSK		equ	1<<bBEEPER		; Beeper output's bit mask
+bBUZZER		equ	4			; Buzzer output's bit# (PORTB)
+cBZMSK		equ	1<<bBUZZER		; Buzzer output's bit mask
 bIDLE		equ	5			; Idle output's bit#
+
+; Music-related constants
+
+cDRWID		equ	3			; # of dur ID bits in ND (Also see {$}!)
+cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
+cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
+cISTUNE		equ	2			; Music ID of the first tune
+cISSMOO		equ	4			; Music ID of the first smooth tune
+cBPM		equ	cFROT*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
+cBZMINI		equ	cBZFDSH*2		; Min iter per buzzer cyc [iter/bc] {C}
+cBZMAXF		equ	cFCLK/cCCPIC/cICPITR/cBZMINI	; Buzzer max freq [bc/s] {D, F}
+cBZMINF		equ	cBZMAXF/256		; Buzzer min frequency [bc/s] {E}
+
+; Notes (no pun intended):
+;
+; {A} Note duration multiplier: Determines how many display sides [the atomic duration
+; of note generation] make up a 1/16 note [the shortest note that can be played], and
+; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2)
+;
+; {B} Buzzer frequency downshift: Picked such that octave 4 is the lowest fully covered
+; octave
+;
+; {C} Min iter per buzzer cycle: Number of iters in the shortest buzzer cycle [highest
+; frequency] - "*2": one buzzer cycle is made up of two buzzer toggles
+;
+; {D} Buzzer max frequency: Frequency, which is divided down by the looked-up pitch
+; dividers to get the desired note frequencies (58.514 kHz @ cBZFDSC=7)
+;
+; {E} Buzzer lowest frequency: Defines the lowest note that can be played (228.6 Hz @
+; cBZFDSC=7 => Lowest note: A#3)
+;
+; {F} Unit of buzzer frequency quantities: Buzzer cycles per sec (bc/s = Hz)
+
+; Tune definition formalism
+
+; --- Pitch ID's ('s' = sharp [#])
+
+As3		equ	0			; The lowest note (see {*} above)
+Bb3		equ	0			; Equal temperament for max efficiency
+B3		equ	1
+
+C4		equ	2			; Octave 4
+Cs4		equ	3
+Db4		equ	3
+D4		equ	4
+Ds4		equ	5
+Eb4		equ	5
+E4		equ	6
+F4		equ	7
+Fs4		equ	8
+Gb4		equ	8
+G4		equ	9
+Gs4		equ	10
+Ab4		equ	10
+A4		equ	11
+As4		equ	12
+Bb4		equ	12
+B4		equ	13
+
+C5		equ	14			; Octave 5
+Cs5		equ	15
+Db5		equ	15
+D5		equ	16
+Ds5		equ	17
+Eb5		equ	17
+E5		equ	18
+F5		equ	19
+Fs5		equ	20
+Gb5		equ	20
+G5		equ	21
+Gs5		equ	22
+Ab5		equ	22
+A5		equ	23
+As5		equ	24
+Bb5		equ	24
+B5		equ	25
+
+C6		equ	26			; Octave 6 (partial)
+Cs6		equ	27
+Db6		equ	27
+D6		equ	28
+Ds6		equ	29
+Eb6		equ	29
+E6		equ	30
+
+Pse		equ	31			; Pause
+
+; --- Duration (value) ID's
+
+V1_16		equ	0			; 1/16
+V1_8		equ	1			; 1/8
+V3_16		equ	2			; 3/16
+V1_4		equ	3			; 1/4
+V3_8		equ	4			; 3/8
+V1_2		equ	5			; 1/2
+V3_4		equ	6			; 3/4
+V1		equ	7			; 1
+
+; --- End of Tune marker
+
+ENDTUNE		equ	255			; Replacing the 1-long pause
+
+; --- Note definition shorthand
+
+#define	N(pch,dr)	(pch<<cDRWID | dr)	; Cram pitch ID & duration ID in 1 byte
 
 
 ;==== Variables ========================================================================
@@ -237,7 +343,7 @@ bIDLE		equ	5			; Idle output's bit#
 ; Fundamental system variables
 
 vDspMod		equ	0x0C			; Display Mode
-vSetPtr		equ	0x0D			; Pointer to Clock var being set
+vSetPtr		equ	0x0D			; Pointer to Clock variable being set
 vFlags		equ	0x0E			; System flags
 
 ; Notes:
@@ -264,7 +370,6 @@ vFlags		equ	0x0E			; System flags
 ;         N (6): Device Info Condition flag
 ;         I (7): Index Hole Quits Idle flag
 
-
 ; Clock Memory (In display order)
 ;
 ; CUSTOMIZATION: Change the order of variables to reflect display preferences (updating
@@ -279,13 +384,11 @@ vMonth		equ	0x13			; Month (1..12)
 vDay		equ	0x14			; Day (1..)
 vYear		equ	0x15			; Year (00..99) [CurrYear-2000]
 
-
 ; Temporary registers for Interrupt Handler
 
 vWTmp		equ 	0x16			; Temporary W
 vStsTmp		equ	0x17			; Temporary STATUS
 vFsrTmp		equ	0x18			; Temporary FSR
-
 
 ; Display-related variables
 
@@ -302,7 +405,6 @@ vFshCtr		equ	0x1E			; Flashing Char Counter
 ; Bit=0: Character on, Bit=1: Character off
 ;
 ; vCurNum is also used as a generic loop countdown
-
 
 ; Display Buffer (12 bytes)
 
@@ -344,14 +446,25 @@ vLpCtr		equ	0x33			; Loop counter for 1 point (PI/1000)
 vMagCtr		equ	0x34			; Time Magnifier counter (for debug)
 vPntCtr		equ	0x35			; Delay counter [point]
 vGenCtr		equ	0x36			; Generic loop counter
-vBpCtr		equ	0x37			; Beeper half-period counter [iter]
-vBpWid		equ	0x38			; Beeper half-period width [iter]
-vBpOCtr		equ	0x39			; Beeper octave counter
-vMsType		equ	0x40			; Music type (0=Silence, 1=Time-chirp)
-vMsTPtr		equ	0x41			; Music current tune pointer
-						; - Chirpie: Display Buffer
-						; - Tune: Tune table
-vMsTCtr		equ	0x42			; Music current tune length counter
+
+; Music-related variables
+
+vMsType		equ	0x37			; Music Type (0=Silence, 1=Time-chirp)
+vCrpPtr		equ	0x38			; Chirp Pointer (Along Display Buffer)
+vTnPtr		equ	0x39			; Tune Pointer (Along current tune LUT)
+vNoteDr		equ	0x40			; Current note's [remaining] duration
+vBzCtr		equ	0x41			; Buzzer half-cycle counter [iter]
+vBzWid		equ	0x42			; Buzzer half-cycle width [iter]
+vBzDCtr		equ	0x43			; Buzzer frequency downshift counter
+
+; Music types:
+;
+;   0 - Silence
+;   1 - Chirpie (Play sounds according to the display's contents)
+;   2 - Manic Miner game jingle
+;   3 - Jet Set Willie game jingle
+;   4 - Woodycock (Anonymous)
+;   5 - Shimmy (from Imre Kálmán: Die Bajadere)
 
 
 ;***************************************************************************************
@@ -392,13 +505,14 @@ Point		macro	mcLit
 ;---- Interrupt jump address (4) -------------------------------------------------------
 
 		goto	IntHdl			; Jump to the handler
-		
-;---- Lookup tables --------------------------------------------------------------------
+
+
+;==== Lookup tables ====================================================================
 
 ; Note: Calculated GOTO table must not span a 256-word boundary, so these subroutines
 ; are better be kept here at the beginning of the code!
 
-;---- Days Per Month lookup
+;---- Days Per Month lookup table
 
 ; Input:  W = Days Per Month Lookup Table offset
 ; Output: W = Number of days in month + 1
@@ -431,22 +545,115 @@ DayLut		addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	31			;   November: 30
 		retlw	32			;   December: 31
 		
-;---- Digit to Sound Half-Period Width lookup
+;---- Chirpie digit to note pitch ID lookup table
 
 ; Input:  W = Digit value
-; Output: W = Number of half-period iterations (not considering octave downshift) [iter]
+; Output: W = Note pitch ID
 
-SoundLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	0			; 0: C = 256
-		retlw	228			; 1: D
-		retlw	203			; 2: E
-		retlw	171			; 3: G
-		retlw	152			; 4: A
-		retlw	128			; 5: C
-		retlw	114			; 6: D
-		retlw	102			; 7: E
-		retlw	85			; 8: G
-		retlw	76			; 9: A
+DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	C4			; Digit 0
+		retlw	D4			; Digit 1
+		retlw	E4			; Digit 2
+		retlw	G4			; Digit 3
+		retlw	A4			; Digit 4
+		retlw	C5			; Digit 5
+		retlw	D5			; Digit 6
+		retlw	E5			; Digit 7
+		retlw	G5			; Digit 8
+		retlw	A5			; Digit 9
+
+;---- Note pitch ID to pitch divider lookup table
+
+; Input:  W = Pitch ID
+; Output: W = Pitch divider
+
+NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	251
+		retlw	237
+		retlw	224
+		retlw	211
+		retlw	199
+		retlw	188
+		retlw	178
+		retlw	168
+		retlw	158
+		retlw	149
+		retlw	141
+		retlw	133
+		retlw	126
+		retlw	118
+		retlw	112
+		retlw	106
+		retlw	100
+		retlw	94
+		retlw	89
+		retlw	84
+		retlw	79
+		retlw	75
+		retlw	70
+		retlw	66
+		retlw	63
+		retlw	59
+		retlw	56
+		retlw	53
+		retlw	50
+		retlw	47
+		retlw	44
+		retlw	0			; Pause (not used as a divide-by-256)
+
+;---- Note duration ID to duration count lookup table
+
+; Input:  W = Duration ID
+; Output: W = Duration count [sd]
+
+NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	1*cDRMUL		; 1/16
+		retlw	2*cDRMUL		; 1/8
+		retlw	3*cDRMUL		; 3/16
+		retlw	4*cDRMUL		; 1/4
+		retlw	6*cDRMUL		; 3/8
+		retlw	8*cDRMUL		; 1/2
+		retlw	12*cDRMUL		; 3/4
+		retlw	16*cDRMUL		; 1
+
+;---- Manic Miner tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(C4,V1_8)
+		retlw	N(E4,V1_8)
+		retlw	N(C4,V1_8)
+		retlw	N(E4,V1_8)
+		retlw	N(G4,V1_4)
+		retlw	N(G4,V1_4)
+		retlw	N(Pse,V1_8)
+		retlw	ENDTUNE
+
+;---- Jet Set Willy tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+JetSetTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	ENDTUNE
+
+;---- Woodycock tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+WoodyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	ENDTUNE
+
+;---- Shimmy tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+ShimmyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	ENDTUNE
 
 
 ;==== Main code ========================================================================
@@ -464,7 +671,7 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		bcf	OPTION_REG,NOT_RBPU	; Turn on PortB's weak pullups
 		bcf	OPTION_REG,PSA		; Prescaler assigned to Timer0
 		bsf	OPTION_REG,PS2		; Prescaler: 1:256
-		bsf	OPTION_REG,PS1		; #### Note: Must be synced w/ cTMRPSC!
+		bsf	OPTION_REG,PS1		; {#} Must be in sync w/ cTMRPSC!
 		bsf	OPTION_REG,PS0
 		bcf	OPTION_REG,T0CS		; Start Timer0
 		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
@@ -478,14 +685,15 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
 
-		Movlf	cTCKPS,vSecTck		; Second Tick Counter
-		Movlf	cTCKCOR,vCorTck		; Tick Correction
-		clrf	vButTck			; Button Hold Tick Counter
+		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
+		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
+		clrf	vButTck			; Clear the Button Hold Tick Counter
 
-		clrf	vBpCtr			; Beeper half-period counter
-		Movlf	cBPOCT,vBpOCtr		; Beeper octave downshift
+		clrf	vBzCtr			; Clear the buzzer half-cycle counter
+		Movlf	cBZFDSH,vBzDCtr		; Load the Buzzer Freq Downshift ctr
 		clrf	vMsType			; Music Type = Silence
-		Movlf	pDspBuf,vMsTPtr		; Music tune pointer (prep for Chirpie)
+		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
+		clrf	vTnPtr			; Reset the Tune Pointer
 
 		Jset	PORTB,bBUTTON,NormBoot	; Button is not pressed - normal boot
 		
@@ -531,7 +739,6 @@ SkipIdxH	call	PrintTime		; Time Memory -> Display Buffer
 ; Hole [i.e., the passing of the IR LED under the photodiode] to an interrupt.
 
 
-
 ;==== Main code subroutines ============================================================
 
 ;---- Utilities ------------------------------------------------------------------------
@@ -550,7 +757,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	2,vMin
+		Movlf	3,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -596,7 +803,7 @@ NoDevInf	bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
 		Jclr	PORTB,b1224H,Done12	; 2. The 12-hour notation
 		bsf	pDspHr,bSUPZ		; Hour value leading 0 suppressed
 		Cmpfl	vHour,12		; Hour<12 (i.e., AM)?
-		Jlt	Done12			; Yepp! Do nothing
+		Jlt	Done12			; Yepp! Do not flash the decimal points
 		Jset	vFshCtr,bFSHBIT,Done12	; Flashing bit set: DP's ON this time
 		bcf	pDspHr+1,bDP		; Turn off decimal point after hours
 		bcf	pDspMin+1,bDP		; Turn off decimal point after minutes
@@ -612,7 +819,7 @@ Done12		return
 PrintNum	Movff	vClkPtr,FSR		; Load the number
 		Movff	INDF,vCurNum		; Save the number
 		Cmpfl	vClkPtr,vHour		; Hours are being printed?
-		Jnz	H24			; Nope! Do nothing
+		Jnz	H24			; Nope! Don't worry about 12/24h
 		Jclr	PORTB,b1224H,H24	; 12-hour notation selected?
 		movlw	12			; Yepp! Preload 12 to W
 		tst	vCurNum			; Hour=0?
@@ -620,8 +827,8 @@ PrintNum	Movff	vClkPtr,FSR		; Load the number
 		addwf	vCurNum,F		; Make 12 out of 0
 		goto	H24			; Done!
 NonZero		cmpfw	vCurNum			; Compare hour to 12
-		Jz	H24			; =12: Do nothing
-		Jlt	H24			; <12: Do nothing
+		Jz	H24			; =12: No hour adjustment needed
+		Jlt	H24			; <12: No hour adjustment needed
 		movlw	12			; Reload 12 to W
 		subwf	vCurNum,F		; Subtract 12 from hour value
 H24		clrf	vCurTen			; Reset the # of tens
@@ -652,7 +859,7 @@ PrintDig	Movff	vDspPtr,FSR
 		Movff	vCurTen,INDF		; *vDspPtr = vCurTen
 		incf	vDspPtr,F		; Advance pointer in the Display Buffer
 		Cmpff	vClkPtr,vSetPtr		; Current clock variable being set?
-		skipnz				; Nope! Do nothing
+		skipnz				; Nope! Do not make digit flash
 		bsf	INDF,bFLASH		; Yepp! Make digit flash
 		tst	vSetPtr			; Determine if Dizzy - In Setting State?
 		Retnz				; Yepp! Definitely not Dizzy
@@ -683,7 +890,7 @@ DoneRvs		call	IsScroll		; Display is Scrolling?
 SkipPrxCorr	call	OutputSide		; Output Front Side
 		Point	cISP			; Inter-Side Pause
 		Cmpfl	vDspPtr,pDspBuf+12	; Display Buffer wrap-around?
-		Jnz	NoWrap			; Nope! Do nothing
+		Jnz	NoWrap			; Nope! Display Buffer Pointer is OK
 		Movlf	pDspBuf,vDspPtr		; Yepp! Reset the Display Buffer pointer
 NoWrap		call	IsScroll		; Display is Scrolling?
 		skipz				; Yepp! Index Hole does nothing
@@ -707,26 +914,72 @@ ZeroISPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
 ; Input:  vDspPtr = Beginning of current side in the Display Buffer
 ; Output: vDspPtr points to the position beyond current side
 ;
-; Note: Also "sound" digits in the Display Buffer one-by-one during the Pre-String Pause
+; Note: Also plays the selected tune [or Chirpie]
 
-OutputSide	call	BeeperOff		; Start by assuming that beeper is off
-		Cmpfl	vMsType,2		; Music is a tune?
+OutputSide	call	BuzzerOff		; Start by assuming that buzzer is off
+		Cmpfl	vMsType,cISTUNE		; Music is a tune?
 		Jge	PlayTune		; Yepp! Play it
-		Movff	vMsTPtr,FSR		; Nupp! Chirpie - "Play" the next digit
+		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
-		call	SoundLut		; Look up the digit's sound's width
-		movwf	vBpWid			; Apply it to the current sound
-		incf	vMsTPtr,F		; Advance to the next digit for sounding
-		Cmpfl	vMsTPtr,pDspBuf+12	; Reached the end of the Display Buffer?
-		Jnz	SoundNote		; Nope! Don't reset the beeper pointer
-		Movlf	pDspBuf,vMsTPtr		; Yepp! Back to the start of the Display
+		call	DigPitchIDLut		; Look up the digit's pitch ID
+		call	NotePitchLut		; Look up the pitch ID's pitch divider
+		movwf	vBzWid			; Apply it to the current sound
+		incf	vCrpPtr,F		; Advance Chirp Pointer to the next digit
+		Cmpfl	vCrpPtr,pDspBuf+12	; Reached the end of the Display Buffer?
+		Jnz	SoundNote		; Nope! Don't reset the Chirp Pointer
+		Movlf	pDspBuf,vCrpPtr		; Yepp! Back to the start of the Display
+		clrf	vNoteDr			; Make the Chirpie choppy (1 for smooth)
 		goto	SoundNote		; Sound that note
-PlayTune	goto	SoundNote		; *** To-do ***
+PlayTune	tst	vNoteDr			; Currently played note is over?
+		Jnz	PlayNote		; Nupp! Keep playing it
+RefetchNote	Cmpfl	vMsType,3		; Music option #2?
+		Jge	Music3			; Nupp! Try the next tune
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	ManicTuneLut		; Play next note in the Manic Miner tune
+		goto	ProcessNote		; Process the note
+Music3		Cmpfl	vMsType,4		; Music option #3?
+		Jge	Music4			; Nupp! Try the next tune
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	JetSetTuneLut		; Play next note in Jet Set Willy tune
+		goto	ProcessNote		; Process the note
+Music4		Cmpfl	vMsType,5		; Music option #4?
+		Jge	Music5			; Nupp! Try the next tune
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	WoodyTuneLut		; Play next note in the Woodycock tune
+		goto	ProcessNote		; Process the note
+Music5		Cmpfl	vMsType,6		; Music option #5?
+		Jge	Music6			; Nupp! Try the next tune
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	ShimmyTuneLut		; Play next note in the Shimmy tune
+		goto	ProcessNote		; Process the note
+Music6		goto	CritErr			; There is no music option #6 as of yet!
+ProcessNote	movwf	vBzWid			; Capture the note pitch ID
+		movwf	vNoteDr			; Capture the note duration ID
+		Cmpfl	vBzWid,ENDTUNE		; Currently played tune over?
+		Jnz	KeepNote		; Nupp! Keep processing the note
+		clrf	vTnPtr			; Reset the Tune Pointer
+		goto	RefetchNote		; Refetch the first note of the tune
+KeepNote	incf	vTnPtr,F		; Increment the Tune Pointer
+		rrf	vBzWid,F		; Decipher the note pitch ID
+		rrf	vBzWid,F		; {$} Rot# must be in sync w/ cDRWID!
+		rrf	vBzWid,F
+		movlw	cPCHMSK
+		andwf	vBzWid,W
+		call	NotePitchLut		; Look up the note pitch divider
+		movwf	vBzWid			; Put result back to vBzWid
+		movlw	cDRMSK			; Decipher the note duration ID
+		andwf	vNoteDr,W
+		call	NoteDuratnLut		; Look up the note duration count
+		movwf	vNoteDr			; Put result back to vNoteDr
+PlayNote	decf	vNoteDr,F		; Decrement the Duration Counter
 SoundNote	tst	vMsType			; Music type is 0 (Silence)?
-		skipz				; Yepp! Do not turn beeper on
-		call	BeeperOn		; Turn beeper on
-		Point	cPRESP			; Pre-String Pause
+		Jz	NowOutputSide		; Yepp! Do not turn buzzer on
+		tst	vBzWid			; Current note is a pause?
+		skipz				; Yepp! Do not turn buzzer on
+		call	BuzzerOn		; Turn buzzer on
+		
+NowOutputSide	Point	cPRESP			; Pre-String Pause
 		call	OutputSup		; Pre-String Suppressed Digits Pause		
 		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
 		call	OutputNum		; 1st number
@@ -736,11 +989,12 @@ SoundNote	tst	vMsType			; Music type is 0 (Silence)?
 		call	OutputNum		; 3rd number
 		call	OutputSup		; Post-String Suppressed Digits Pause
 		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
-;		Cmpfl	vMsType,1		; Music is Chirpie?
-;		skipz				; Yepp! Don't turn beeper off yet
-;		call	BeeperOff		; Turn beeper off (medium beep)
+		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
+		Jlt	OffBuzzer		; Nope! Buzzer is definitely off
+		tst	vNoteDr			; Currently played note is over?
+		skipnz				; Nope! Don't turn buzzer off yet
+OffBuzzer	call	BuzzerOff		; Turn buzzer off
 		Point	cPOSTSP			; Post-String Pause
-;		call	BeeperOff		; Turn beeper off (long beep)
 		return
 
 
@@ -805,13 +1059,13 @@ PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
 MagniLoop	Movlf	cLPCNT,vLpCtr		; Load the number of iters for 1 point
 		Jclr	vFlags,bQUIDLE,IterLoop	; No quit upon Index Hole detection
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
-IterLoop	decfsz	vBpCtr,F		; Beeper half-period done yet?
+IterLoop	decfsz	vBzCtr,F		; Buzzer half-cycle done yet?
 		goto	NoToggle		; Nope! Move on
-		Movff	vBpWid,vBpCtr		; Reload the beeper half-period counter
-		decfsz	vBpOCtr,F		; Beeper octave downshift done yet?
+		Movff	vBzWid,vBzCtr		; Reload the buzzer half-cycle counter
+		decfsz	vBzDCtr,F		; Buzzer frequency downshift done yet?
 		goto	NoToggle		; Nope! Move on
-		Movlf	cBPOCT,vBpOCtr		; Reload the beeper octave downshift ctr
-		movlw	cBPMSK			; Toggle the beeper output!
+		Movlf	cBZFDSH,vBzDCtr		; Reload the buzzer freq downshift ctr
+		movlw	cBZMSK			; Toggle the buzzer output!
 		xorwf	PORTB,F
 NoToggle	decfsz	vLpCtr,F		; 1 point passed yet?		
 		goto	IterLoop		; Nope! Stay in loop
@@ -823,17 +1077,17 @@ QuitIdle	bcf	PORTB,bIDLE		; Clear the IDLE diagnostic bit
 		return
  
 
-;------ Turn beeper on/off
+;------ Turn buzzer on/off
 
-BeeperOff	clrw				; W = 0 means off
+BuzzerOff	clrw				; W = 0 means off
 		skipz
-BeeperOn	iorlw	1			; W != 0 means on	
+BuzzerOn	iorlw	1			; W != 0 means on	
 		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		errorlevel -302			; Disable msg 302 ("Not in bank 0")
-		skipnz				; Beeper to be turned on?
-		bsf	TRISB,bBEEPER		; Nope! Turn beeper off
-		skipz				; Beeper to be turned off?
-		bcf	TRISB,bBEEPER		; Nope! Turn beeper on
+		skipnz				; Buzzer to be turned on?
+		bsf	TRISB,bBUZZER		; Nope! Turn buzzer off
+		skipz				; Buzzer to be turned off?
+		bcf	TRISB,bBUZZER		; Nope! Turn buzzer on
 		errorlevel +302			; Re-enable msg 302 ("Not in bank 0")
 		bcf	STATUS,RP0		; Switch back to Bank 0
 		return
@@ -990,7 +1244,7 @@ ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
 ; 1. Button pressed
 		Jset	vFlags,bBUTST,CntPress	; If not start of a press, keep counting
 		Cmpfl	vButTck,cDBLTCK		; Press qualifies for a Double Click?
-		skipge				; Nope! Do nothing
+		skipge				; Nope! Do not set the Double Click flag
 		bsf	vFlags,bDBLCLK		; Yepp! Set the Double Click flag
 		clrf	vButTck			; Reset the Button Tick counter
 		tst	vSetPtr			; In Setting State right now?
@@ -1040,7 +1294,7 @@ ProcButton	tst	vSetPtr			; Setting State?
 ; 1.1.1 Single Click
 		incf	vDspMod,F		; Advance the Display Mode
 		Cmpfl	vDspMod,cNUMMOD		; Max reached?
-		skiplt				; Nope! Do nothing
+		skiplt				; Nope! Display Mode is OK
 		clrf	vDspMod			; Yepp! Reset the Display Mode
 		return
 
@@ -1048,13 +1302,15 @@ ProcButton	tst	vSetPtr			; Setting State?
 DblClk		bcf	vFlags,bDBLCLK		; Clear Double Click
 		movlw	cNUMMOD			; Undo the Display Mode increment
 		tst	vDspMod			; Currently at min?
-		skipnz				; Nope! Do nothing
+		skipnz				; Nope! Display Mode is OK
 		movwf	vDspMod			; Yepp! Wrap around the Display Mode
 		decf	vDspMod,F		; Decrement the Display Mode
 		incf	vMsType,F		; Advance the Music Type
 		Cmpfl	vMsType,cNUMMUS		; Max reached?
-		skiplt				; Nope! Do nothing
+		skiplt				; Nope! Music Type is OK
 		clrf	vMsType			; Yepp! Reset the Music Type
+		clrf	vTnPtr			; Reset the Tune Pointer
+		clrf	vNoteDr			; Reset the Duration Counter
 		return
 
 RunLong		Retclr	vFlags,bLONGB		; Long Button event? Return if not
@@ -1095,8 +1351,8 @@ SetLong		Retclr	vFlags,bLONGB		; Long Button event? Return if not
 
 ;==== Stop that little runaway at Runaway Bay ==========================================
 
-		org	0x3FF
-		goto	CritErr			; Execution got to this point -> OOPS!
+;		org	0x3FF
+;		goto	CritErr			; Execution got to this point -> OOPS!
 
 
 		end
