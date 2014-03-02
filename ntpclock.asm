@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.3.0
+; NTPClock Firmware v3.4.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -93,13 +93,13 @@
 cFSCR		equ	4			; Display scroll speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
-cDRMUL		equ	2			; Note duration multiplier {A}			
-cBZFDSH		equ	7			; Buzzer frequency downshift {B}
+cDRMUL		equ	1			; Note duration multiplier {A}			
+cBZFDSH		equ	4			; Buzzer frequency downshift {B}
 
 ; Sentinel constants
 
 cNUMMOD		equ	4			; Number of different display modes
-cNUMMUS		equ	3			; Number of different music options
+cNUMMUS		equ	6			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
@@ -614,7 +614,7 @@ NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	6*cDRMUL		; 3/8
 		retlw	8*cDRMUL		; 1/2
 		retlw	12*cDRMUL		; 3/4
-		retlw	16*cDRMUL		; 1
+		retlw	64*cDRMUL		; 1
 
 ;---- Manic Miner tune lookup table
 
@@ -622,13 +622,59 @@ NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	N(C4,V1_8)
 		retlw	N(E4,V1_8)
-		retlw	N(C4,V1_8)
+		retlw	N(Fs4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_4)
+		retlw	N(C5,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(C5,V1_4)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_4)
+
 		retlw	N(E4,V1_8)
-		retlw	N(G4,V1_4)
-		retlw	N(G4,V1_4)
-		retlw	N(Pse,V1_8)
+		retlw	N(Fs4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_4)
+		retlw	N(C5,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(C5,V1_4)
+		retlw	N(B4,V1_2)
+
+		retlw	N(E4,V1_8)
+		retlw	N(Fs4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_4)
+		retlw	N(C5,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(C5,V1_4)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_4)
+
+		retlw	N(E4,V1_8)
+		retlw	N(Fs4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(A4,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(E5,V1_8)
+		retlw	N(B4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(E4,V1_8)
+		retlw	N(Gs4,V1_8)
+		retlw	N(B4,V1_2)
 		retlw	ENDTUNE
 
 ;---- Jet Set Willy tune lookup table
@@ -637,6 +683,7 @@ ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 JetSetTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(A4,V1)
 		retlw	ENDTUNE
 
 ;---- Woodycock tune lookup table
@@ -645,6 +692,7 @@ JetSetTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 WoodyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(A5,V1)
 		retlw	ENDTUNE
 
 ;---- Shimmy tune lookup table
@@ -653,6 +701,26 @@ WoodyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 ShimmyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(0,7)
+		retlw	N(2,7)
+		retlw	N(4,7)
+		retlw	N(5,7)
+		retlw	N(7,7)
+		retlw	N(9,7)
+		retlw	N(11,7)
+		retlw	N(12,7)
+		retlw	N(14,7)
+		retlw	N(16,7)
+		retlw	N(17,7)
+		retlw	N(19,7)
+		retlw	N(21,7)
+		retlw	N(23,7)
+		retlw	N(24,7)
+		retlw	N(26,7)
+		retlw	N(28,7)
+		retlw	N(29,7)
+		retlw	N(31,6)
+		retlw	N(31,6)
 		retlw	ENDTUNE
 
 
@@ -757,7 +825,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	3,vMin
+		Movlf	4,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -980,6 +1048,9 @@ SoundNote	tst	vMsType			; Music type is 0 (Silence)?
 		call	BuzzerOn		; Turn buzzer on
 		
 NowOutputSide	Point	cPRESP			; Pre-String Pause
+		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
+		skiplt				; Nope! Buzzer to be turned off already
+		call	BuzzerOff		; Turn buzzer off
 		call	OutputSup		; Pre-String Suppressed Digits Pause		
 		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
 		call	OutputNum		; 1st number
@@ -989,11 +1060,9 @@ NowOutputSide	Point	cPRESP			; Pre-String Pause
 		call	OutputNum		; 3rd number
 		call	OutputSup		; Post-String Suppressed Digits Pause
 		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
-		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
-		Jlt	OffBuzzer		; Nope! Buzzer is definitely off
 		tst	vNoteDr			; Currently played note is over?
 		skipnz				; Nope! Don't turn buzzer off yet
-OffBuzzer	call	BuzzerOff		; Turn buzzer off
+		call	BuzzerOff		; Turn buzzer off
 		Point	cPOSTSP			; Post-String Pause
 		return
 
