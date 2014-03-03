@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.4.0
+; NTPClock Firmware v3.4.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -826,7 +826,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	4,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -855,8 +855,10 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 		Movlf	pClkMem,vClkPtr		; From: Clock Memory
 		Movlf	pDspBuf,vDspPtr		; To: Display Buffer
 		Movlf	6,vGenCtr		; Initialize the loop countdown
+	bsf	0x44,0
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
+	bcf	0x44,0
 
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
@@ -1216,6 +1218,9 @@ InfLoop		Movff	vGenCtr,PORTA		; Throw the character on the display
 AdvClock	Retset	vFlags,bFROZEN		; Don't advance clock if it is Frozen
 		decfsz	vSecTck,F		; Second tick countdown reached zero?
 		return				; Nope! Get out of here
+
+	skipclr	0x44,0
+	incf	vYear,F	
 
 		Movlf	cTCKPS,vSecTck		; Yepp! Reload the Ticks Per Sec value
 		tst	vCorTck			; Leap second facility in use at all?
