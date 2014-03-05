@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.4.1
+; NTPClock Firmware v3.5.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -90,11 +90,11 @@
 
 ; Customization constants
 
-cFSCR		equ	4			; Display scroll speed [rev/min]
+cVSCRL		equ	4			; Display scroll speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {A}			
-cBZFDSH		equ	4			; Buzzer frequency downshift {B}
+cBZFDIV		equ	3			; Buzzer frequency divider {B}
 
 ; Sentinel constants
 
@@ -105,13 +105,13 @@ cNUMMUS		equ	6			; Number of different music options
 
 cMAGCNT		equ	1			; Normal-1, Debug-64 (0.5 sec/digit)
 
-; Inherent constants
+; System constants
 
-cFCLK		equ	19660800		; Clock cycles per second [cc/s]
-cFROT		equ	360			; Carousel rotation speed [rev/min]
-cCCPIC		equ	4			; Clock cycles per instr. cycle [cc/ic]
-cICPITR		equ	6			; Instr. cycles per iter [ic/iter] {1}
-cPTPREV		equ	2000			; Points per revolution [point/rev]
+cFCLK		equ	19660800		; Clock freq (cycles per second) [cc/s]
+cVSPIN		equ	360			; Carousel rotation speed [rev/min]
+cCCPIC		equ	4			; Clock cycles per instr cycle [cc/ic]
+cICPKITR	equ	7508			; Instr cyc per 1000 iter [ic/kiter] {1}
+cPTPREV		equ	2000			; Points per revolution [point/krev] {1}
 cSDPREV		equ	2			; Display sides per revolution [sd/rev]
 
 ; Geometrical constants
@@ -125,16 +125,17 @@ cDIGWID		equ	8			; Digit width [mm]
 cTCKCOR		equ	0			; Seconds per 1 leap second (0: unused)
 cTMRPSC		equ	256			; Timer0 prescaler (Also see {#}!)
 cTMRCNT		equ	256			; Timer0 required count (Just max out)
-cLPCOR		equ	2			; Loop iteration correction [iter] {2}
 
 ; Calculated system constants (Note: tick = Timer0 interrupt)
 
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
 cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
-cITRPS		equ	cICPS/cICPITR		; Iterations per sec [iter/s]
-cPTPS		equ	cFROT*cPTPREV/60	; Points per sec [point/s]
-cLPCNT		equ	cITRPS/cPTPS - cLPCOR	; Loop iterations per point [iter/point]
-cSCRGAP		equ	cPTPREV*cFSCR/cFROT	; Angle gap causing scroll [point]
+cKPTPREV	equ	cPTPREV/1000		; 1000 points per rev [kpoint/krev] {1}
+
+cITRPPT		equ	60*cFCLK/cCCPIC/cICPKITR/cVSPIN/cKPTPREV
+						; Loop itera per point [iter/point] {1}
+
+cSCRGAP		equ	cPTPREV*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	51			; Max angle of digit width [point]
 						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTCKPS		equ	cICPS/cTMRPSC/cTMRCNT	; Ticks per sec (truncated!) [tick/s]
@@ -154,43 +155,62 @@ cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
 cISP		equ	cSCRGAP			; Inter-Side Pause
 cPOSTSP		equ	cPRESP-cISP		; Post-String Pause
-cREVCOR		equ	2			; Revolution Correction {3}
-cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
+cREVCOR		equ	8			; Revolution Correction {2}
+cPRXCOR		equ	80			; Index Hole Parallax Correction {3}
  		
- 		if	cPRESP>255 		; Check the value of cPRESP {5}
+ 		if	cPRESP>255 		; Check the value of cPRESP {4}
 		error 	"Pre-String Pause value doesn't fit into a byte"
 		endif
 
 ; Notes:
 ;
-; {1} Number of instruction cycles along the most executed section of code [Idle-code],
-; the non-quitting, non-buzzer-toggling iteration ("iter") of IterLoop: 2 non-skipping
-; decfsz's (1 cycle each) and 2 goto's (2 cycles each).
+; {1} Number of PtDelay Inner Loop iterations per point, calculated based on the
+; following logic (with not all intermediate quantities explicitly defined):
 ;
-; {2} Correction factor for the number of IterLoop iterations per point, accounting for
-; all the instruction cycles not spent in the Idle-code. It is tuned by finding the
-; smallest value, where a Stand-Scrolling display is still rotating left (with cREVCOR
-; set to 0).
+; cICPS = cFCLK/cCCPIC          Instruction cycles per sec [ic/s]
+; cITRPS = cICPS/cICPITR        Loop iterations per sec [iter/s]
+; cPTPS = cVSPIN*cPTPREV/60     Points per sec [point/s]
 ;
-; {3} The final Idle delay within a full display cycle, which is a "shim" factor to
+; therefore
+;
+; cITRPPT = cITRPS/cPTPS        Loop iterations per point [iter/point]
+;         = 60*cFCLK / cCCPIC*cICPITR*cVSPIN*cPTREV
+;
+; but
+; 
+; a) The effective number of instruction cycles per iteration (cICPITR) is a fractional
+; value, taking into account the varying evaluation of the differen conditionals;
+; therefore this value is better taken over a 1000 iterations instead (cICPKITR).
+; 
+; b) To compensate for the above, the number of points per revolution (cPTPREV) quantity
+; in the formula is replaced by the number of 1000 points per revolution (cKPTPREV),
+; which is a round 2 by definition.
+;
+; Therefore
+;
+; cITRPPT = 60*cFCLK / cCCPIC*cICPKITR*cVSPIN*cKPTREV
+;
+; {2} The final Idle delay within a full display cycle, which is a "shim" factor to
 ; synchronize the angular speed of display generation to the angular speed of the
-; carousel as much as possible. It is tuned by finding the value, where the Stand-
-; Scrolling display is the closest to stationary (with cLPCOR already tuned). Despite
-; all these efforts, achieving a quasi-stationary display this way is virtually
-; impossible, and it may also be affected by temperature and other factors. Therefore,
-; for the stationary display of the Alternating Mode, position syncronization is done
-; using the "Index Hole" IR LED/photodiode pair recycled from the original floppy drive.
-; However, fine-tuning the display synchronity will maximize the correctness of the
-; specified display scroll angular speed (cFROT) for the scrolling display modes.
+; carousel as much as possible. It accounts for the truncation error of the cITRPPT
+; value, as well as for all the instruction cycles not spent in the Idle-code (which
+; works the opposite way than the previous factor). It is tuned by finding the value,
+; where the Stand-Scrolling display is the closest to stationary. Despite all these
+; efforts, achieving a quasi-stationary display this way is virtually impossible, and it
+; may also be affected by temperature and other factors. Therefore, for the stationary
+; display of the Alternating Mode, position syncronization is done using the "Index
+; Hole" IR LED/photodiode pair recycled from the original floppy drive. However,
+; fine-tuning the display synchronity will maximize the correctness of the specified
+; display scroll angular speed (cVSCRL) for the scrolling display modes.
 ;
-; {4} Correction factor compensating for the fact that while the "Index Hole" IR LED is
+; {3} Correction factor compensating for the fact that while the "Index Hole" IR LED is
 ; positioned such that it perfectly lines up with the photodiode when the longer edge of
 ; the rotating circuit board is parallel to the front of the floppy drive [the starting
 ; position of display generation], the photodiode begins to "see" the IR LED even before
 ; perfect alignment. It is tuned by finding the value, where the middle of the display
 ; sections in Alternating Mode line up with the middle of the floppy drive.
 ;
-; {5} The Pre-String Pause is the longest delay during display generation. If its value
+; {4} The Pre-String Pause is the longest delay during display generation. If its value
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
@@ -239,10 +259,7 @@ cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
 cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
 cISTUNE		equ	2			; Music ID of the first tune
 cISSMOO		equ	4			; Music ID of the first smooth tune
-cBPM		equ	cFROT*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
-cBZMINI		equ	cBZFDSH*2		; Min iter per buzzer cyc [iter/bc] {C}
-cBZMAXF		equ	cFCLK/cCCPIC/cICPITR/cBZMINI	; Buzzer max freq [bc/s] {D, F}
-cBZMINF		equ	cBZMAXF/256		; Buzzer min frequency [bc/s] {E}
+cBPM		equ	cVSPIN*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
 
 ; Notes (no pun intended):
 ;
@@ -250,71 +267,61 @@ cBZMINF		equ	cBZMAXF/256		; Buzzer min frequency [bc/s] {E}
 ; of note generation] make up a 1/16 note [the shortest note that can be played], and
 ; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2)
 ;
-; {B} Buzzer frequency downshift: Picked such that octave 4 is the lowest fully covered
-; octave
-;
-; {C} Min iter per buzzer cycle: Number of iters in the shortest buzzer cycle [highest
-; frequency] - "*2": one buzzer cycle is made up of two buzzer toggles
-;
-; {D} Buzzer max frequency: Frequency, which is divided down by the looked-up pitch
-; dividers to get the desired note frequencies (58.514 kHz @ cBZFDSC=7)
-;
-; {E} Buzzer lowest frequency: Defines the lowest note that can be played (228.6 Hz @
-; cBZFDSC=7 => Lowest note: A#3)
-;
-; {F} Unit of buzzer frequency quantities: Buzzer cycles per sec (bc/s = Hz)
+; {B} Buzzer frequency divider: A divider in addition to the pitch divider; picked such
+; that octave 5 is the lowest fully covered octave (in order to improve the buzzer's
+; performance)
 
 ; Tune definition formalism
 
 ; --- Pitch ID's ('s' = sharp [#])
 
-As3		equ	0			; The lowest note (see {*} above)
-Bb3		equ	0			; Equal temperament for max efficiency
-B3		equ	1
+A4		equ	0			; The lowest note
+As4		equ	1
+Bb4		equ	1			; Equal temperament for max efficiency
+B4		equ	2
 
-C4		equ	2			; Octave 4
-Cs4		equ	3
-Db4		equ	3
-D4		equ	4
-Ds4		equ	5
-Eb4		equ	5
-E4		equ	6
-F4		equ	7
-Fs4		equ	8
-Gb4		equ	8
-G4		equ	9
-Gs4		equ	10
-Ab4		equ	10
-A4		equ	11
-As4		equ	12
-Bb4		equ	12
-B4		equ	13
+C5		equ	3			; Octave 5
+Cs5		equ	4
+Db5		equ	4
+D5		equ	5
+Ds5		equ	6
+Eb5		equ	6
+E5		equ	7
+F5		equ	8
+Fs5		equ	9
+Gb5		equ	9
+G5		equ	10
+Gs5		equ	11
+Ab5		equ	11
+A5		equ	12
+As5		equ	13
+Bb5		equ	13
+B5		equ	14
 
-C5		equ	14			; Octave 5
-Cs5		equ	15
-Db5		equ	15
-D5		equ	16
-Ds5		equ	17
-Eb5		equ	17
-E5		equ	18
-F5		equ	19
-Fs5		equ	20
-Gb5		equ	20
-G5		equ	21
-Gs5		equ	22
-Ab5		equ	22
-A5		equ	23
-As5		equ	24
-Bb5		equ	24
-B5		equ	25
+C6		equ	15			; Octave 6
+Cs6		equ	16
+Db6		equ	16
+D6		equ	17
+Ds6		equ	18
+Eb6		equ	18
+E6		equ	19
+F6		equ	20
+Fs6		equ	21
+Gb6		equ	21
+G6		equ	22
+Gs6		equ	23
+Ab6		equ	23
+A6		equ	24
+As6		equ	25
+Bb6		equ	25
+B6		equ	26
 
-C6		equ	26			; Octave 6 (partial)
-Cs6		equ	27
-Db6		equ	27
-D6		equ	28
-Ds6		equ	29
-Eb6		equ	29
-E6		equ	30
+C7		equ	27			; Octave 7 (partial)
+Cs7		equ	28
+Db7		equ	28
+D7		equ	29
+Ds7		equ	30
+Eb7		equ	30
 
 Pse		equ	31			; Pause
 
@@ -440,11 +447,11 @@ pDspYr		equ	pDspBuf+(vYear-pClkMem)*2
 ; Misc. system variables
 
 vSecTck		equ	0x30			; Second Tick Counter (1 byte!)
-vCorTck		equ	0x31			; Second Tick Correction counter
+vCorTck		equ	0x31			; Second Tick Correction Counter
 vButTck		equ	0x32			; Button Hold Tick Counter (1 byte!)
-vLpCtr		equ	0x33			; Loop counter for 1 point (PI/1000)
-vMagCtr		equ	0x34			; Time Magnifier counter (for debug)
-vPntCtr		equ	0x35			; Delay counter [point]
+vItrCtr		equ	0x33			; Loop iter ctr for 1 point (PI/1000)
+vMagCtr		equ	0x34			; Time Magnifier Counter (for debug)
+vPntCtr		equ	0x35			; Delay Counter [point]
 vGenCtr		equ	0x36			; Generic loop counter
 
 ; Music-related variables
@@ -453,9 +460,9 @@ vMsType		equ	0x37			; Music Type (0=Silence, 1=Time-chirp)
 vCrpPtr		equ	0x38			; Chirp Pointer (Along Display Buffer)
 vTnPtr		equ	0x39			; Tune Pointer (Along current tune LUT)
 vNoteDr		equ	0x40			; Current note's [remaining] duration
-vBzCtr		equ	0x41			; Buzzer half-cycle counter [iter]
+vBzCtr		equ	0x41			; Buzzer Half-Cycle Counter [iter]
 vBzWid		equ	0x42			; Buzzer half-cycle width [iter]
-vBzDCtr		equ	0x43			; Buzzer frequency downshift counter
+vBzDCtr		equ	0x43			; Buzzer Frequency Divide Counter
 
 ; Music types:
 ;
@@ -551,16 +558,16 @@ DayLut		addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note pitch ID
 
 DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	C4			; Digit 0
-		retlw	D4			; Digit 1
-		retlw	E4			; Digit 2
-		retlw	G4			; Digit 3
-		retlw	A4			; Digit 4
-		retlw	C5			; Digit 5
-		retlw	D5			; Digit 6
-		retlw	E5			; Digit 7
-		retlw	G5			; Digit 8
-		retlw	A5			; Digit 9
+		retlw	C5			; Digit 0
+		retlw	D5			; Digit 1
+		retlw	E5			; Digit 2
+		retlw	G5			; Digit 3
+		retlw	A5			; Digit 4
+		retlw	C6			; Digit 5
+		retlw	D6			; Digit 6
+		retlw	E6			; Digit 7
+		retlw	G6			; Digit 8
+		retlw	A6			; Digit 9
 
 ;---- Note pitch ID to pitch divider lookup table
 
@@ -568,36 +575,36 @@ DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Pitch divider
 
 NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	251
-		retlw	237
-		retlw	224
-		retlw	211
-		retlw	199
-		retlw	188
-		retlw	178
-		retlw	168
-		retlw	158
-		retlw	149
-		retlw	141
-		retlw	133
-		retlw	126
-		retlw	118
-		retlw	112
-		retlw	106
-		retlw	100
-		retlw	94
-		retlw	89
-		retlw	84
-		retlw	79
-		retlw	75
+		retlw	248
+		retlw	234
+		retlw	221
+		retlw	209
+		retlw	197
+		retlw	186
+		retlw	175
+		retlw	166
+		retlw	156
+		retlw	147
+		retlw	139
+		retlw	131
+		retlw	124
+		retlw	117
+		retlw	110
+		retlw	104
+		retlw	98
+		retlw	93
+		retlw	88
+		retlw	83
+		retlw	78
+		retlw	74
 		retlw	70
 		retlw	66
-		retlw	63
+		retlw	62
 		retlw	59
-		retlw	56
-		retlw	53
-		retlw	50
-		retlw	47
+		retlw	55
+		retlw	52
+		retlw	49
+		retlw	46
 		retlw	44
 		retlw	0			; Pause (not used as a divide-by-256)
 
@@ -622,59 +629,59 @@ NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	N(E4,V1_8)
-		retlw	N(Fs4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_4)
-		retlw	N(C5,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(C5,V1_4)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_4)
-
-		retlw	N(E4,V1_8)
-		retlw	N(Fs4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_4)
-		retlw	N(C5,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(C5,V1_4)
-		retlw	N(B4,V1_2)
-
-		retlw	N(E4,V1_8)
-		retlw	N(Fs4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_4)
-		retlw	N(C5,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(C5,V1_4)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_4)
-
-		retlw	N(E4,V1_8)
-		retlw	N(Fs4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(A4,V1_8)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_8)
 		retlw	N(E5,V1_8)
-		retlw	N(B4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(E4,V1_8)
-		retlw	N(Gs4,V1_8)
-		retlw	N(B4,V1_2)
+		retlw	N(Fs5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_4)
+		retlw	N(C6,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_4)
+
+		retlw	N(E5,V1_8)
+		retlw	N(Fs5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_4)
+		retlw	N(C6,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(B5,V1_2)
+
+		retlw	N(E5,V1_8)
+		retlw	N(Fs5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_4)
+		retlw	N(C6,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_4)
+
+		retlw	N(E5,V1_8)
+		retlw	N(Fs5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(E6,V1_8)
+		retlw	N(B5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(E5,V1_8)
+		retlw	N(Gs5,V1_8)
+		retlw	N(B5,V1_2)
 		retlw	ENDTUNE
 
 ;---- Jet Set Willy tune lookup table
@@ -757,8 +764,8 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		clrf	vButTck			; Clear the Button Hold Tick Counter
 
-		clrf	vBzCtr			; Clear the buzzer half-cycle counter
-		Movlf	cBZFDSH,vBzDCtr		; Load the Buzzer Freq Downshift ctr
+		clrf	vBzCtr			; Clear the Buzzer Half-Cycle Counter
+		Movlf	cBZFDIV,vBzDCtr		; Load the Buzzer Freq Divide Ctr
 		clrf	vMsType			; Music Type = Silence
 		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
 		clrf	vTnPtr			; Reset the Tune Pointer
@@ -825,8 +832,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	4,vMin
-		Movlf	1,vSec
+		Movlf	5,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1051,7 +1058,7 @@ SoundNote	tst	vMsType			; Music type is 0 (Silence)?
 		
 NowOutputSide	Point	cPRESP			; Pre-String Pause
 		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
-		skiplt				; Nope! Buzzer to be turned off already
+		skipge				; Yepp! Do not turn buzzer off yet
 		call	BuzzerOff		; Turn buzzer off
 		call	OutputSup		; Pre-String Suppressed Digits Pause		
 		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
@@ -1127,19 +1134,19 @@ PtDelay		bsf	PORTB,bIDLE		; Set the IDLE diagnostic bit
 		tst	vPntCtr			; Is it 0?
 		Jz	QuitIdle		; Yepp! Get out of here quick
 PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
-MagniLoop	Movlf	cLPCNT,vLpCtr		; Load the number of iters for 1 point
-		Jclr	vFlags,bQUIDLE,IterLoop	; No quit upon Index Hole detection
+MagniLoop	Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
+		Jclr	vFlags,bQUIDLE,CoreLoop	; No quit upon Index Hole detection
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
-IterLoop	decfsz	vBzCtr,F		; Buzzer half-cycle done yet?
+CoreLoop	decfsz	vBzDCtr,F		; Buzzer frequency divide done yet?
 		goto	NoToggle		; Nope! Move on
-		Movff	vBzWid,vBzCtr		; Reload the buzzer half-cycle counter
-		decfsz	vBzDCtr,F		; Buzzer frequency downshift done yet?
+		Movlf	cBZFDIV,vBzDCtr		; Reload the Buzzer Freq Divide Ctr
+		decfsz	vBzCtr,F		; Buzzer half-cycle done yet?
 		goto	NoToggle		; Nope! Move on
-		Movlf	cBZFDSH,vBzDCtr		; Reload the buzzer freq downshift ctr
+		Movff	vBzWid,vBzCtr		; Reload the Buzzer Half-Cycle Counter
 		movlw	cBZMSK			; Toggle the buzzer output!
 		xorwf	PORTB,F
-NoToggle	decfsz	vLpCtr,F		; 1 point passed yet?		
-		goto	IterLoop		; Nope! Stay in loop
+NoToggle	decfsz	vItrCtr,F		; 1 point passed yet?		
+		goto	CoreLoop		; Nope! Stay in the Core Loop
 		decfsz	vMagCtr,F		; Magnification done yet?
 		goto	MagniLoop		; Nope! Stay in loop
 		decfsz	vPntCtr,F		; Point delay passed yet?
@@ -1296,7 +1303,7 @@ DayRoll		movlw	0x03			; Mask 0000 0011
 ;------ The button status detection state machine
 
 ; Generates the button events for ProcButton; however, takes care of unfreezing the
-; clock & resetting the Ticks Per Sec counter "in house".
+; clock & resetting the Ticks Per Sec Counter "in house".
 ;
 ; Button events:
 ;  - Short Button Event (vFlags:bSHORTB): Generated upon the release of a short press
@@ -1320,11 +1327,11 @@ ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
 		Cmpfl	vButTck,cDBLTCK		; Press qualifies for a Double Click?
 		skipge				; Nope! Do not set the Double Click flag
 		bsf	vFlags,bDBLCLK		; Yepp! Set the Double Click flag
-		clrf	vButTck			; Reset the Button Tick counter
+		clrf	vButTck			; Reset the Button Tick Counter
 		tst	vSetPtr			; In Setting State right now?
 		Jnz	CntPress		; Yepp! No action upon start of press
 		Jclr	vFlags,bFROZEN,CntPress	; If clock is not Frozen, -"-
-		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec counter
+		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec Counter
 		bcf	vFlags,bFROZEN		; Unfreeze the clock
 		bsf	vFlags,bCANSHT		; Cancel Short Button Event
 CntPress	bsf	vFlags,bBUTST		; Save the current button state
@@ -1339,7 +1346,7 @@ NoLong		Cmpfl	vButTck,255		; About to max out on Button Tick?
 
 ; 2. Button not pressed
 NoPress		Jclr	vFlags,bBUTST,CntDeprss	; If not end of a press, keep counting
-		clrf	vButTck			; Reset the Button Tick counter
+		clrf	vButTck			; Reset the Button Tick Counter
 		skipset	vFlags,bCANSHT		; Short Button Event needs cancel?
 		bsf	vFlags,bSHORTB		; Nope! Generate the event
 		bcf	vFlags,bCANSHT		; Clear the Short Butt Event Cancel flag
