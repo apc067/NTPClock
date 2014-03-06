@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.5.1
+; NTPClock Firmware v3.6.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -37,9 +37,9 @@
 ; PORTB 2 (O): In ISR output [diagnostics]
 ; PORTB 3 (I): 12/24-hour Selector input (low: 24h)
 ; PORTB 4 (O): Buzzer output
-; PORTB 5 (O): Idle output [diagnostics]
-; PORTB 6 (I): <Unused>  [ICSP Clock]
-; PORTB 7 (I): <Unused>  [ICSP Data]
+; PORTB 5 (I): <Unused>
+; PORTB 6 (O): PrintTime output [diagnostics] / ICSP Clock
+; PORTB 7 (O): Idle output [diagnostics] / ICSP Data
 
 
 ;***************************************************************************************
@@ -250,7 +250,8 @@ bINISR		equ	2			; In ISR output's bit# (PORTB)
 b1224H		equ	3			; 12/24-hr Selector input's bit# (PORTB)
 bBUZZER		equ	4			; Buzzer output's bit# (PORTB)
 cBZMSK		equ	1<<bBUZZER		; Buzzer output's bit mask
-bIDLE		equ	5			; Idle output's bit#
+bPRINTM		equ	6			; PrintTime output's bit#
+bIDLE		equ	7			; Idle output's bit#
 
 ; Music-related constants
 
@@ -741,8 +742,7 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		errorlevel -302			; Disable msg 302 ("Not in bank 0")
 		clrf	TRISA			; PortA: All output
-		Movlf	b'11111011',TRISB	; PortB: Bit 2 & 5: output, rest: input
-						; *** Bit 5 is input until circuit board is confirmed to be OK ***
+		Movlf	b'00101011',TRISB	; PortB: Bit 2, 4, 6 & 7: I; Rest: O
 		bcf	OPTION_REG,NOT_RBPU	; Turn on PortB's weak pullups
 		bcf	OPTION_REG,PSA		; Prescaler assigned to Timer0
 		bsf	OPTION_REG,PS2		; Prescaler: 1:256
@@ -826,8 +826,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	5,vMin
-		Movlf	1,vSec
+		Movlf	6,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -856,10 +856,10 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 		Movlf	pClkMem,vClkPtr		; From: Clock Memory
 		Movlf	pDspBuf,vDspPtr		; To: Display Buffer
 		Movlf	6,vGenCtr		; Initialize the loop countdown
-	bsf	0x44,0
+		bsf	PORTB,bPRINTM		; Set the PrintTime diagnostic bit
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
-	bcf	0x44,0
+		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
 
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
@@ -1127,7 +1127,7 @@ DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
 
 ; Input: W = Number of points (PI/1000) of carousel revolution to delay
 
-PtDelay		bsf	PORTB,bIDLE		; Set the IDLE diagnostic bit
+PtDelay		bsf	PORTB,bIDLE		; Set the Idle diagnostic bit
 		movwf	vPntCtr			; Load number of points
 		tst	vPntCtr			; Is it 0?
 		Jz	QuitIdle		; Yepp! Get out of here quick
@@ -1149,7 +1149,7 @@ NoToggle	decfsz	vItrCtr,F		; 1 point passed yet?
 		goto	MagniLoop		; Nope! Stay in loop
 		decfsz	vPntCtr,F		; Point delay passed yet?
 		goto	PointLoop		; Nope! Stay in loop
-QuitIdle	bcf	PORTB,bIDLE		; Clear the IDLE diagnostic bit
+QuitIdle	bcf	PORTB,bIDLE		; Clear the Idle diagnostic bit
 		return
  
 
@@ -1223,9 +1223,6 @@ InfLoop		Movff	vGenCtr,PORTA		; Throw the character on the display
 AdvClock	Retset	vFlags,bFROZEN		; Don't advance clock if it is Frozen
 		decfsz	vSecTck,F		; Second tick countdown reached zero?
 		return				; Nope! Get out of here
-
-	skipclr	0x44,0
-	incf	vYear,F	
 
 		Movlf	cTCKPS,vSecTck		; Yepp! Reload the Ticks Per Sec value
 		tst	vCorTck			; Leap second facility in use at all?
