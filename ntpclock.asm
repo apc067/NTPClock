@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.5.0
+; NTPClock Firmware v3.5.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -153,8 +153,8 @@ cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
-cISP		equ	cSCRGAP			; Inter-Side Pause
-cPOSTSP		equ	cPRESP-cISP		; Post-String Pause
+cPSP		equ	cSCRGAP			; Post-Side Pause
+cPOSTSP		equ	cPRESP-cPSP		; Post-String Pause
 cREVCOR		equ	8			; Revolution Correction {2}
 cPRXCOR		equ	80			; Index Hole Parallax Correction {3}
  		
@@ -753,17 +753,14 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		bcf	STATUS,RP0		; Switch back to Bank 0
 
 		Movlf	cTMRRLD,TMR0		; Load Timer0 (Super-nitpicky ;-) )
-		Point	10			; Short delay to get the IR LED ready
 
 ; Initialize variables
 
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
-
 		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
 		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		clrf	vButTck			; Clear the Button Hold Tick Counter
-
 		clrf	vBzCtr			; Clear the Buzzer Half-Cycle Counter
 		Movlf	cBZFDIV,vBzDCtr		; Load the Buzzer Freq Divide Ctr
 		clrf	vMsType			; Music Type = Silence
@@ -803,10 +800,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 
 ; The Main Loop
 
-MainLoop	call	IsScroll		; Display is scrollong?
-		Jz	SkipIdxH		; Yepp! Skip waiting for the Index Hole
-WaitIdxH	Jset	PORTB,bINDEXH,WaitIdxH	; Spinning loop: wait for the Index Hole
-SkipIdxH	call	PrintTime		; Time Memory -> Display Buffer
+MainLoop	call	PrintTime		; Time Memory -> Display Buffer
 		call	OutputBuff		; Display Buffer -> Nixie
 		goto	MainLoop		; Main Loop iteration done
 
@@ -833,7 +827,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	5,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -961,29 +955,33 @@ NoSet		Jset	vFlags,bFROZEN,DoneRvs	; No set: Time first if 1) clock Frozen
 		andlw	0x02			; Find the appropriate bit
 		Jz	DoneRvs			; 3) desired 2-second interval is on
 		Movlf	pDspBuf+6,vDspPtr	; Yepp! Put second half to front
-DoneRvs		call	IsScroll		; Display is Scrolling?
-		Jz	SkipPrxCorr		; Yepp! Start displaying
-		Point	cPRXCOR			; Issue the Idx Hole parallax correction
-SkipPrxCorr	call	OutputSide		; Output Front Side
-		Point	cISP			; Inter-Side Pause
+DoneRvs		call	OutputSide		; Output Front Side
+		Point	cPSP			; Post-Side Pause
 		Cmpfl	vDspPtr,pDspBuf+12	; Display Buffer wrap-around?
-		Jnz	NoWrap			; Nope! Display Buffer Pointer is OK
+		Jnz	DoneWrap			; Nope! Display Buffer Pointer is OK
 		Movlf	pDspBuf,vDspPtr		; Yepp! Reset the Display Buffer pointer
-NoWrap		call	IsScroll		; Display is Scrolling?
+DoneWrap	call	IsScroll		; Display is Scrolling?
 		skipz				; Yepp! Index Hole does nothing
 		bsf	vFlags,bQUIDLE		; Nope! Index Hole quits Idle (*)
 		call	OutputSide		; Output Back Side
 		Point	cREVCOR			; Revolution Correction
 		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
-		Jz	OneISP			; Yepp! 1 ISP
-		Jlt	ZeroISPs		; Left-Scr: 0 ISP's; Right-Scr: 2 ISP's
-		Point	cISP			; Delay one ISP
-OneISP		Point	cISP			; Delay one ISP
-ZeroISPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
+		Jz	OnePSP			; Yepp! 1 PSP
+		Jlt	ZeroPSPs		; Alt/Left: 0 PSP's; Right-Scr: 2 PSP's
+		Point	cPSP			; Delay one PSP
+OnePSP		Point	cPSP			; Delay one PSP
+ZeroPSPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
+		call	IsScroll		; Display is scrollong?
+		Retz				; Yepp! Don't wait for the Index Hole
+SyncHole	Jset	PORTB,bINDEXH,SyncHole	; Wait for the Index Hole (typ. no need)
+		Point	cPRXCOR			; Issue the Idx Hole parallax correction		
 		return
 
 ; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
-; the Index Hole starts being seen before the Back Side's Post-String Pause is over.
+; the Index Hole starts being seen even before the Back Side's Post-String Pause is
+; over. Also because of this, the spinning loop waiting for the Index Hole only has a
+; chance to spin when switching to the Alternating display mode, and the display needs
+; to be synced to the carousel position.
 
 
 ;------ Output Side (excl. the Post-String Pause)
