@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.7.0
+; NTPClock Firmware v3.7.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -255,7 +255,7 @@ bIDLE		equ	7			; Idle output's bit#
 
 ; Music-related constants
 
-cDRWID		equ	3			; # of dur ID bits in ND (Also see {$}!)
+cDRWID		equ	3			; # of Dur ID bits in ND (Also see {$}!)
 cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
 cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
 cISTUNE		equ	2			; Music ID of the first tune
@@ -341,9 +341,14 @@ V1		equ	7			; 1
 
 ENDTUNE		equ	255			; Replacing the 1-long pause
 
-; --- Note definition shorthand
+; --- Note definition shorthand for the Note Descriptor
+;
+; Structure of the Note Descriptor:
+;
+; Bits: 7 6 5 4 3        - Pitch ID
+;                 2 1 0  - Duration ID
 
-#define	N(pch,dr)	(pch<<cDRWID | dr)	; Cram pitch ID & duration ID in 1 byte
+#define	N(pch,dr)	(pch<<cDRWID | dr)	; Cram Pitch ID & Duration ID in 1 byte
 
 
 ;==== Variables ========================================================================
@@ -553,10 +558,10 @@ DayLut		addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	31			;   November: 30
 		retlw	32			;   December: 31
 		
-;---- Chirpie digit to note pitch ID lookup table
+;---- Chirpie digit to note Pitch ID lookup table
 
 ; Input:  W = Digit value
-; Output: W = Note pitch ID
+; Output: W = Note Pitch ID
 
 DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	C5			; Digit 0
@@ -570,7 +575,7 @@ DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	G6			; Digit 8
 		retlw	A6			; Digit 9
 
-;---- Note pitch ID to pitch divider lookup table
+;---- Note Pitch ID to pitch divider lookup table
 
 ; Input:  W = Pitch ID
 ; Output: W = Pitch divider
@@ -609,7 +614,7 @@ NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	44
 		retlw	0			; Pause (not used as a divide-by-256)
 
-;---- Note duration ID to duration count lookup table
+;---- Note Duration ID to duration count lookup table
 
 ; Input:  W = Duration ID
 ; Output: W = Duration count [sd]
@@ -827,7 +832,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	7,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1001,8 +1006,8 @@ OutputSide	call	BuzzerOff		; Start by assuming that buzzer is off
 		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
-		call	DigPitchIDLut		; Look up the digit's pitch ID
-		call	NotePitchLut		; Look up the pitch ID's pitch divider
+		call	DigPitchIDLut		; Look up the digit's Pitch ID
+		call	NotePitchLut		; Look up the Pitch ID's pitch divider
 		movwf	vBzWid			; Apply it to the current sound
 		incf	vCrpPtr,F		; Advance Chirp Pointer to the next digit
 		Cmpfl	vCrpPtr,pDspBuf+12	; Reached the end of the Display Buffer?
@@ -1033,21 +1038,21 @@ Music5		Cmpfl	vMsType,6		; Music option #5?
 		call	ShimmyTuneLut		; Play next note in the Shimmy tune
 		goto	ProcessNote		; Process the note
 Music6		goto	CritErr			; There is no music option #6 as of yet!
-ProcessNote	movwf	vBzWid			; Capture the note pitch ID
-		movwf	vNoteDr			; Capture the note duration ID
+ProcessNote	movwf	vBzWid			; Capture note Pitch ID from Note Descr.
+		movwf	vNoteDr			; Capture the note Duration ID from N.D.
 		Cmpfl	vBzWid,ENDTUNE		; Currently played tune over?
 		Jnz	KeepNote		; Nupp! Keep processing the note
 		clrf	vTnPtr			; Reset the Tune Pointer
 		goto	RefetchNote		; Refetch the first note of the tune
 KeepNote	incf	vTnPtr,F		; Increment the Tune Pointer
-		rrf	vBzWid,F		; Decipher the note pitch ID
+		rrf	vBzWid,F		; Decipher the note Pitch ID
 		rrf	vBzWid,F		; {$} Rot# must be in sync w/ cDRWID!
 		rrf	vBzWid,F
 		movlw	cPCHMSK
 		andwf	vBzWid,W
 		call	NotePitchLut		; Look up the note pitch divider
 		movwf	vBzWid			; Put result back to vBzWid
-		movlw	cDRMSK			; Decipher the note duration ID
+		movlw	cDRMSK			; Decipher the note Duration ID
 		andwf	vNoteDr,W
 		call	NoteDuratnLut		; Look up the note duration count
 		movwf	vNoteDr			; Put result back to vNoteDr
@@ -1181,7 +1186,8 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 
 		bsf	PORTB,bINISR		; Set the In ISR diagnostic bit
 		movwf	vWTmp			; Save W
-		Movff	STATUS,vStsTmp		; Save STATUS
+		swapf	STATUS,W		; Save [a nybble-swapped copy of] STATUS
+		movwf	vStsTmp
 		Movff	FSR,vFsrTmp		; Save FSR (not needed; just in case)
 
 		call	AdvClock		; Advance the clock
@@ -1190,12 +1196,16 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 
 		bcf	INTCON,T0IF		; Clear the Timer0 IT flag
 		Movff	vFsrTmp,FSR		; Restore FSR
-		Movff	vStsTmp,STATUS		; Restore STATUS
-		swapf	vWTmp,F			; Restore W (Tricky solution needed:
-		swapf	vWTmp,W			;   "movf vWTmp,W" affects the Z flag!)
+		swapf	vStsTmp,W		; Restore STATUS
+		movwf	STATUS
+		swapf	vWTmp,F			; Restore W
+		swapf	vWTmp,W
 		bcf	PORTB,bINISR		; Clear the In ISR diagnostic bit
 
 		retfie
+		
+; Note: All that SWAPF-trickery: needed, because "movf" alters the Z flag!
+
 
 ;---- Other interrupts -----------------------------------------------------------------
 
