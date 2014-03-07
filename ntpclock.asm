@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.6.0
+; NTPClock Firmware v3.7.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -392,7 +392,7 @@ vMonth		equ	0x13			; Month (1..12)
 vDay		equ	0x14			; Day (1..)
 vYear		equ	0x15			; Year (00..99) [CurrYear-2000]
 
-; Temporary registers for Interrupt Handler
+; Temporary registers for the Interrupt Handler
 
 vWTmp		equ 	0x16			; Temporary W
 vStsTmp		equ	0x17			; Temporary STATUS
@@ -796,7 +796,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		clrf	vFshCtr			; Reset the Flashing Character Counter
 		bsf	vFlags,bFROZEN		; Freeze the clock [it became "Dizzy"]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
-		bsf	INTCON,T0IE		; Enable Timer0 Interrupt
+		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
 ; The Main Loop
 
@@ -826,7 +826,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	6,vMin
+		Movlf	7,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -856,10 +856,14 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 		Movlf	pClkMem,vClkPtr		; From: Clock Memory
 		Movlf	pDspBuf,vDspPtr		; To: Display Buffer
 		Movlf	6,vGenCtr		; Initialize the loop countdown
+		bcf	INTCON,T0IE		; Disable the Timer0 Interrupt
+; *** Start of critical section for Clock Memory access
 		bsf	PORTB,bPRINTM		; Set the PrintTime diagnostic bit
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
+; *** End of critical section for Clock Memory access
+		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
@@ -1188,7 +1192,7 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		Movff	vFsrTmp,FSR		; Restore FSR
 		Movff	vStsTmp,STATUS		; Restore STATUS
 		swapf	vWTmp,F			; Restore W (Tricky solution needed:
-		swapf	vWTmp,W			;   "movf vwTmp,W" affects the Z flag!)
+		swapf	vWTmp,W			;   "movf vWTmp,W" affects the Z flag!)
 		bcf	PORTB,bINISR		; Clear the In ISR diagnostic bit
 
 		retfie
