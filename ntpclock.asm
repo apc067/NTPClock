@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.7.1
+; NTPClock Firmware v3.7.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -832,7 +832,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	7,vMin
-		Movlf	1,vSec
+		Movlf	2,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -967,7 +967,7 @@ NoSet		Jset	vFlags,bFROZEN,DoneRvs	; No set: Time first if 1) clock Frozen
 DoneRvs		call	OutputSide		; Output Front Side
 		Point	cPSP			; Post-Side Pause
 		Cmpfl	vDspPtr,pDspBuf+12	; Display Buffer wrap-around?
-		Jnz	DoneWrap			; Nope! Display Buffer Pointer is OK
+		Jnz	DoneWrap		; Nope! Display Buffer Pointer is OK
 		Movlf	pDspBuf,vDspPtr		; Yepp! Reset the Display Buffer pointer
 DoneWrap	call	IsScroll		; Display is Scrolling?
 		skipz				; Yepp! Index Hole does nothing
@@ -980,17 +980,18 @@ DoneWrap	call	IsScroll		; Display is Scrolling?
 		Point	cPSP			; Delay one PSP
 OnePSP		Point	cPSP			; Delay one PSP
 ZeroPSPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
-		call	IsScroll		; Display is scrollong?
-		Retz				; Yepp! Don't wait for the Index Hole
-SyncHole	Jset	PORTB,bINDEXH,SyncHole	; Wait for the Index Hole (typ. no need)
+		call	IsScroll		; Display is scrolling?
+		Retz				; Yepp! No Idx Hole parallax correction
 		Point	cPRXCOR			; Issue the Idx Hole parallax correction		
 		return
 
 ; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
 ; the Index Hole starts being seen even before the Back Side's Post-String Pause is
-; over. Also because of this, the spinning loop waiting for the Index Hole only has a
-; chance to spin when switching to the Alternating display mode, and the display needs
-; to be synced to the carousel position.
+; over. The only time this is not the case is when switching from the Right-Scrolling to
+; the Alternating display mode. However, instead of having a spinning loop to wait for
+; the Index Hole to show up, we just let the display, which is scrolling right this time
+; due to the superfluous Index Hole parallax correction, gradually bring itself to the
+; right orientation (while the music never stops even for a split second).
 
 
 ;------ Output Side (excl. the Post-String Pause)
