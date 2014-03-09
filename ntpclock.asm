@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.7.2
+; NTPClock Firmware v3.8.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -61,8 +61,8 @@
 ;    - Setting: vSetPtr = Non0
 ;
 ; 4. Different conditions
-;    - Frozen Clock: vFlags:bFROZEN = 1 (Waiting for button push to start clock)
-;    - Device Info:  vFlags:bDEVINF = 1 (Displaying device info instead of time)
+;    - Frozen Clock: vFlags2:bFROZEN = 1 (Waiting for button push to start clock)
+;    - Device Info:  vFlags2:bDEVINF = 1 (Displaying device info instead of time)
 ;
 ; 5. Display behavior
 ;    - Stationary: Display position is stabilized using the Index Hole
@@ -133,14 +133,19 @@ cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 cKPTPREV	equ	cPTPREV/1000		; 1000 points per rev [kpoint/krev] {1}
 
 cITRPPT		equ	60*cFCLK/cCCPIC/cICPKITR/cVSPIN/cKPTPREV
-						; Loop itera per point [iter/point] {1}
+						; Loop iters per point [iter/point] {1}
 
 cSCRGAP		equ	cPTPREV*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	51			; Max angle of digit width [point]
 						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
-cTCKPS		equ	cICPS/cTMRPSC/cTMRCNT	; Ticks per sec (truncated!) [tick/s]
+cTMRDIV		equ	cTMRPSC*cTMRCNT		; Total timer divider
+cTCKPS		equ	cICPS/cTMRDIV		; Ticks per sec [tick/s]
 cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
 cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
+
+		if	cTCKPS*cTMRDIV!=cICPS
+		messg	"*** WARNING! Timer tick period is not a divisor of 1 second!
+		endif
 
 ; Point delay constants for display layout [point]
 
@@ -159,7 +164,7 @@ cREVCOR		equ	8			; Revolution Correction {2}
 cPRXCOR		equ	80			; Index Hole Parallax Correction {3}
  		
  		if	cPRESP>255 		; Check the value of cPRESP {4}
-		error 	"Pre-String Pause value doesn't fit into a byte"
+		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
 		endif
 
 ; Notes:
@@ -238,9 +243,15 @@ bSHORTB		equ	1			; Short Button Event flag's bit#
 bLONGB		equ	2			; Long Button Event flag's bit#
 bDBLCLK		equ	3			; Double Click flag's bit#
 bCANSHT		equ	4			; Cancel Short Button Event flag's bit#
-bFROZEN		equ	5			; Frozen Clock Condition flag's bit#
-bDEVINF		equ	6			; Device Info Condition flag's bit#
-bQUIDLE		equ	7			; Index Hole Quits Idle flag's bit#
+
+; vFlags2 bit constants
+
+bSDCNT		equ	0			; Side Count flag's bit#
+cSDMSK		equ	1<<bSDCNT		; Side Count flag's bit mask
+bFROZEN		equ	1			; Frozen Clock Condition flag's bit#
+bDEVINF		equ	2			; Device Info Condition flag's bit#
+bQUIDLE		equ	3			; Idx Hole Should Quit Idle flag's bit#
+bSAWIDX		equ	4			; Saw Idx Hole During Quidle flag's bit#
 
 ; I/O port bit constants
 
@@ -358,6 +369,7 @@ ENDTUNE		equ	255			; Replacing the 1-long pause
 vDspMod		equ	0x0C			; Display Mode
 vSetPtr		equ	0x0D			; Pointer to Clock variable being set
 vFlags		equ	0x0E			; System flags
+vFlags2		equ	0x0F			; System flags #2
 
 ; Notes:
 ;
@@ -372,16 +384,24 @@ vFlags		equ	0x0E			; System flags
 ; vFlags:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         I N F X D L S B
+;         - - - X D L S B
 ;
 ;         B (0): Button State flag (1 = pressed)
 ;         S (1): Short Button Event flag
 ;         L (2): Long Button Event flag
 ;         D (3): Double Click flag
 ;         X (4): Cancel Short Button Event flag
-;         F (5): Frozen Clock Condition flag
-;         N (6): Device Info Condition flag
-;         I (7): Index Hole Quits Idle flag
+;
+; vFlags2:
+;
+;   Bits: 7 6 5 4 3 2 1 0
+;         - - - I Q N F S
+;
+;         S (0): Side Count flag [1-bit side counter: 0-front, 1-back]
+;         F (1): Frozen Clock Condition flag
+;         N (2): Device Info Condition flag
+;         Q (3): Index Hole Should Quit Idle ("Quidle") flag
+;         I (4): Saw Index Hole During Quidle flag
 
 ; Clock Memory (In display order)
 ;
@@ -763,6 +783,7 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
+		clrf	vFlags2
 		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
 		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		clrf	vButTck			; Clear the Button Hold Tick Counter
@@ -778,7 +799,7 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 
 		call	PreloadDevInf		; Preload Clock memory w/ device info
 		Movlf	3,vDspMod		; Display Mode = Right-Scroll
-		bsf	vFlags,bDEVINF		; Indicate the Device Info Condition
+		bsf	vFlags2,bDEVINF		; Indicate the Device Info Condition
 		
 ; Device Info Loop (Borrow the bSHORTB flag)
 
@@ -791,7 +812,7 @@ DoneOrig	call	PrintTime		; Device info -> Display Buffer
 		call	OutputBuff		; Display Buffer -> Nixie
 		goto	DevInfLoop		; Device Info Loop iteration done
 QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
-		bcf	vFlags,bDEVINF		; Cancel the Device Info Condition
+		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
 		Point	10			; Short delay to kill any button bounce
 
 ; Normal boot
@@ -799,7 +820,7 @@ QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		Movlf	1,vDspMod		; Display Mode = Left-Scroll
 		clrf	vFshCtr			; Reset the Flashing Character Counter
-		bsf	vFlags,bFROZEN		; Freeze the clock [it became "Dizzy"]
+		bsf	vFlags2,bFROZEN		; Freeze the clock [it became "Dizzy"]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
 		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
@@ -831,8 +852,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	7,vMin
-		Movlf	2,vSec
+		Movlf	8,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -847,7 +868,7 @@ IsScroll	tst	vDspMod			; Display Mode = Alternating?
 		Jz	NoScroll		; Yepp! Not Scrolling
 		tst	vSetPtr			; Operation State = Setting?
 		Retnz				; Yepp! Not Scrolling
-		skipclr	vFlags,bFROZEN		; Clock is in Frozen Condition?
+		skipclr	vFlags2,bFROZEN		; Clock is in Frozen Condition?
 NoScroll	bcf	STATUS,Z		; Yepp! Not Scrolling
 		return				; Nope! Scrolling
 
@@ -873,12 +894,12 @@ PrintLoop	call	PrintNum		; Print the value
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
 		bsf	pDspMin+1,bDP		; Decimal point after minutes
-		Jclr	vFlags,bDEVINF,NoDevInf	; 1. Device Info Condition
+		Jclr	vFlags2,bDEVINF,NoDev	; 1. Device Info Condition
 		bsf	pDspHr,bSUPZ		; FW major value leading 0 suppressed
 		bsf	pDspMin,bSUPZ		; FW minor value leading 0 suppressed
 		bsf	pDspSec,bSUPZ		; FW subminor value leading 0 suppressed
 		bsf	pDspYr,bSUPZ		; HW subminor value leading 0 suppressed
-NoDevInf	bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
+NoDev		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
 		bsf	pDspDay,bSUPZ		; Day  value leading 0 suppressed
 		Jclr	PORTB,b1224H,Done12	; 2. The 12-hour notation
 		bsf	pDspHr,bSUPZ		; Hour value leading 0 suppressed
@@ -943,65 +964,146 @@ PrintDig	Movff	vDspPtr,FSR
 		bsf	INDF,bFLASH		; Yepp! Make digit flash
 		tst	vSetPtr			; Determine if Dizzy - In Setting State?
 		Retnz				; Yepp! Definitely not Dizzy
-		skipclr	vFlags,bFROZEN		; Not Frozen -> not Dizzy either!
+		skipclr	vFlags2,bFROZEN		; Not Frozen -> not Dizzy either!
 		bsf	INDF,bFLASH		; Dizzy -> make digit flash
 		return
 
 
 ;------ Infamy #2: Output the Display Buffer's content to the Nixie
 
-OutputBuff	Movlf	pDspBuf,vDspPtr		; vDspPtr = &pDspBuf; Who to print 1st?
-		tst	vSetPtr			; Setting State?
-		Jz	NoSet			; Nope! The bit more complicated case
-		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Second half is being set?
-		Jlt	DoneRvs			; Nope! Keep first half in front
-		Movlf	pDspBuf+6,vDspPtr	; Yepp! Put second half to front
-		goto	DoneRvs			; Done calculating display reversal
-NoSet		Jset	vFlags,bFROZEN,DoneRvs	; No set: Time first if 1) clock Frozen
-		tst	vDspMod			; 2) display is not Alternating
-		Jnz	DoneRvs			; Done with reversing the two sides
-		incf	vSec,W			; Increment: put 59->00 transit to front
-		andlw	0x02			; Find the appropriate bit
-		Jz	DoneRvs			; 3) desired 2-second interval is on
-		Movlf	pDspBuf+6,vDspPtr	; Yepp! Put second half to front
-DoneRvs		call	OutputSide		; Output Front Side
-		Point	cPSP			; Post-Side Pause
-		Cmpfl	vDspPtr,pDspBuf+12	; Display Buffer wrap-around?
-		Jnz	DoneWrap		; Nope! Display Buffer Pointer is OK
-		Movlf	pDspBuf,vDspPtr		; Yepp! Reset the Display Buffer pointer
-DoneWrap	call	IsScroll		; Display is Scrolling?
-		skipz				; Yepp! Index Hole does nothing
-		bsf	vFlags,bQUIDLE		; Nope! Index Hole quits Idle (*)
-		call	OutputSide		; Output Back Side
-		Point	cREVCOR			; Revolution Correction
-		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
-		Jz	OnePSP			; Yepp! 1 PSP
-		Jlt	ZeroPSPs		; Alt/Left: 0 PSP's; Right-Scr: 2 PSP's
-		Point	cPSP			; Delay one PSP
-OnePSP		Point	cPSP			; Delay one PSP
-ZeroPSPs	bcf	vFlags,bQUIDLE		; Cancel Index Hole quitting Idle
-		call	IsScroll		; Display is scrolling?
-		Retz				; Yepp! No Idx Hole parallax correction
-		Point	cPRXCOR			; Issue the Idx Hole parallax correction		
+OutputBuff	call	OutputSide		; Output one side
+		call	OutputSide		; Output the other side
 		return
 
-; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
-; the Index Hole starts being seen even before the Back Side's Post-String Pause is
-; over. The only time this is not the case is when switching from the Right-Scrolling to
-; the Alternating display mode. However, instead of having a spinning loop to wait for
-; the Index Hole to show up, we just let the display, which is scrolling right this time
-; due to the superfluous Index Hole parallax correction, gradually bring itself to the
-; right orientation (while the music never stops even for a split second).
 
-
-;------ Output Side (excl. the Post-String Pause)
+;------ Output Side (& play the selected music)
 
 ; Input:  vDspPtr = Beginning of current side in the Display Buffer
 ; Output: vDspPtr points to the position beyond current side
 ;
 ; Note: Also plays the selected tune [or Chirpie]
 
-OutputSide	call	BuzzerOff		; Start by assuming that buzzer is off
+OutputSide	call	SoundMusic		; Sound that music for the side		
+		Movlf	pDspBuf,vDspPtr		; Display Buffer pointer to time
+		clrf	vCurNum			; Assume time desired (borrow vCurNum)
+		tst	vSetPtr			; Setting State?
+		Jz	NoSet			; Nope! Regular clock operation
+		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Date is being set?
+		Jlt	TimeSd0			; Nope! Keep time on Side 0
+		goto	DateSd0			; Yepp! Put date to Side 0
+NoSet		Jset	vFlags2,bFROZEN,TimeSd0	; No set: Time on 0 if 1) clock Frozen
+		tst	vDspMod			; 2) display is not Alternating
+		Jnz	TimeSd0			; Keep time on Side 0
+		incf	vSec,W			; Increment: put 59->00 transit to front
+		andlw	0x02			; Find the appropriate bit
+		Jz	TimeSd0			; 3) desired 2-second interval is on
+DateSd0		comf	vCurNum,F		; Desired output is date
+TimeSd0		skipclr	vFlags2,bSDCNT		; Outputting Side 0?
+		comf	vCurNum,F		; Nope! Desired output is the opposite
+		tst	vCurNum			; Is the desired output time?
+		Jz	PtrDone			; Yepp! Nointer is at the right position
+		Movlf	pDspBuf+6,vDspPtr	; Nope! Display Buffer pointer to date
+PtrDone		Point	cPRESP			; Pre-String Pause
+		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
+		skipge				; Yepp! Do not turn buzzer off yet
+		call	BuzzerOff		; Turn buzzer off
+		call	OutputSup		; Pre-String Suppressed Digits Pause		
+		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
+		call	OutputNum		; 1st number
+		Point	cINP			; Inter-Number Pause
+		call	OutputNum		; 2nd number
+		Point	cINP			; Inter-Number Pause
+		call	OutputNum		; 3rd number
+		call	OutputSup		; Post-String Suppressed Digits Pause
+		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
+		tst	vNoteDr			; Currently played note is over?
+		skipnz				; Nope! Don't turn buzzer off yet
+		call	BuzzerOff		; Turn buzzer off
+		call	IsScroll		; Display is Scrolling?
+		Jz	ScrollDisp		; Yepp! Handle that case separately
+		bsf	vFlags2,bQUIDLE		; Nope! Index Hole quits Idle (*)
+		Point	cPOSTSP			; "Soft" Post-String Pause
+		bcf	vFlags2,bQUIDLE		; Cancel Index Hole quitting Idle
+		Jclr	vFlags2,bSDCNT,OutSide0	; Is this Side 0?
+		Point	cPRXCOR			; Nope! Uncond. Idx Hole Parallax Corr
+OutSide0	Jclr	vFlags2,bSAWIDX,OnePSP	; Index Hole was not seen - 1 PSP & done
+		Jset	vFlags2,bSDCNT,OutSide1	; Index Hole seen; is this Side 1?
+		Point	cPRXCOR			; Nope! Idx Hole Parallax Corr still due
+OutSide1	bcf	vFlags2,bSDCNT		; Upcoming side must be Side 0 [again]
+		return
+ScrollDisp	Point	cPOSTSP			; Post-String Pause
+		Jclr	vFlags2,bSDCNT,OnePSP	; Side 0 - standard single PSP
+		Point	cREVCOR			; Side 1 - start w/ Revolution Corr
+		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
+		Jz	OnePSP			; Yepp! 1 PSP
+		Jlt	ZeroPSP			; Left-Scroll: 0 PSP's
+		Point	cPSP			; Right-Scroll: 2 PSP's
+OnePSP		Point	cPSP			; Stand-Scroll: 1PSP
+ZeroPSP		movlw	cSDMSK			; Invert the Side Count bit
+		xorwf	vFlags2,F
+		return
+
+; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
+; the Index Hole starts being seen even before the Back Side's Post-String Pause is
+; over. The only time this is not the case is when switching from the Right-Scrolling to
+; the Alternating display mode. However, instead of having a spinning loop to wait for
+; the Index Hole to show up, we just let the display that is scrolling right (this time
+; due to the superfluous Index Hole Parallax Correction) gradually bring itself to the
+; right orientation (while the music never stops even for a split second).
+
+
+;------ Output Suppressed Digits Pause
+
+; Input:  vDspPtr = Beginning of current side in the Display Buffer
+; Output: FSR points to the position beyond current side
+
+; Note: It is assumed that Suppress If Zero & Decimal Point are mutually exclusive!
+
+OutputSup	Movff	vDspPtr,FSR		; Start of the side's Display Buffer
+		Movlf	6,vGenCtr		; Initialize the loop countdown
+SupLoop		movf	INDF,W			; Access the current digit
+		andlw	cXDMSK			; Cut the Flashing attribute
+		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
+		Jnz	NoSup			; Digit is a suppressed zero?
+		Point	cHDIGP			; Yepp! Issue a Half Digit Pause
+NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
+		Djnz	vGenCtr,SupLoop		; Loop until side is over
+		return
+
+
+;------ Output Number
+
+; Input:  FSR = Current position in the Display Buffer to read from
+; Output: FSR points to the next position
+
+OutputNum	call	OutputDig		; 1st digit
+		Point	cIDP			; Inter-Digit Pause
+		call	OutputDig		; 2nd digit
+		return
+
+
+;------ Output Digit
+	
+; Input:  FSR = Current position in the Display Buffer to read from
+; Output: FSR points to the next position
+
+OutputDig	movf	INDF,W			; Access the digit
+		andlw	cXDMSK			; Cut the Flashing attribute
+		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
+		Jz	DigDone			; Suppressed! I'm all done here!
+		Jclr	INDF,bFLASH,CharOn	; Character not flashing: character on
+		Jset	vFshCtr,bFSHBIT,CharOff	; Flashing bit is set: character off
+CharOn		Movff	INDF,PORTA		; Light the Nixie
+CharOff		Point	cDIGLTP			; Digit Light-Up Pause
+		Movlf	cSPACE,PORTA		; Unlight the Nixie
+		Point	cDIGWP			; Digit Width Pause
+DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
+		return
+ 
+
+;------ Sound the music as part of OutputSide
+
+SoundMusic	call	BuzzerOff		; Start by assuming that buzzer is off
 		Cmpfl	vMsType,cISTUNE		; Music is a tune?
 		Jge	PlayTune		; Yepp! Play it
 		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
@@ -1059,79 +1161,12 @@ KeepNote	incf	vTnPtr,F		; Increment the Tune Pointer
 		movwf	vNoteDr			; Put result back to vNoteDr
 PlayNote	decf	vNoteDr,F		; Decrement the Duration Counter
 SoundNote	tst	vMsType			; Music type is 0 (Silence)?
-		Jz	NowOutputSide		; Yepp! Do not turn buzzer on
+		Retz 				; Yepp! Do not turn buzzer on
 		tst	vBzWid			; Current note is a pause?
 		skipz				; Yepp! Do not turn buzzer on
 		call	BuzzerOn		; Turn buzzer on
-		
-NowOutputSide	Point	cPRESP			; Pre-String Pause
-		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
-		skipge				; Yepp! Do not turn buzzer off yet
-		call	BuzzerOff		; Turn buzzer off
-		call	OutputSup		; Pre-String Suppressed Digits Pause		
-		Movff	vDspPtr,FSR		; Reset pointer to the Display Buffer
-		call	OutputNum		; 1st number
-		Point	cINP			; Inter-Number Pause
-		call	OutputNum		; 2nd number
-		Point	cINP			; Inter-Number Pause
-		call	OutputNum		; 3rd number
-		call	OutputSup		; Post-String Suppressed Digits Pause
-		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
-		tst	vNoteDr			; Currently played note is over?
-		skipnz				; Nope! Don't turn buzzer off yet
-		call	BuzzerOff		; Turn buzzer off
-		Point	cPOSTSP			; Post-String Pause
 		return
 
-
-;------ Output Suppressed Digits Pause
-
-; Input:  vDspPtr = Beginning of current side in the Display Buffer
-; Output: FSR points to the position beyond current side
-
-; Note: It is assumed that Suppress If Zero & Decimal Point are mutually exclusive!
-
-OutputSup	Movff	vDspPtr,FSR		; Start of the side's Display Buffer
-		Movlf	6,vGenCtr		; Initialize the loop countdown
-SupLoop		movf	INDF,W			; Access the current digit
-		andlw	cXDMSK			; Cut the Flashing attribute
-		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
-		Jnz	NoSup			; Digit is a suppressed zero?
-		Point	cHDIGP			; Yepp! Issue a Half Digit Pause
-NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
-		Djnz	vGenCtr,SupLoop		; Loop until side is over
-		return
-
-
-;------ Output Number
-
-; Input:  FSR = Current position in the Display Buffer to read from
-; Output: FSR points to the next position
-
-OutputNum	call	OutputDig		; 1st digit
-		Point	cIDP			; Inter-Digit Pause
-		call	OutputDig		; 2nd digit
-		return
-
-
-;------ Output Digit
-	
-; Input:  FSR = Current position in the Display Buffer to read from
-; Output: FSR points to the next position
-
-OutputDig	movf	INDF,W			; Access the digit
-		andlw	cXDMSK			; Cut the Flashing attribute
-		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
-		Jz	DigDone			; Suppressed! I'm all done here!
-		Jclr	INDF,bFLASH,CharOn	; Character not flashing: character on
-		Jset	vFshCtr,bFSHBIT,CharOff	; Flashing bit is set: character off
-CharOn		Movff	INDF,PORTA		; Light the Nixie
-CharOff		Point	cDIGLTP			; Digit Light-Up Pause
-		Movlf	cSPACE,PORTA		; Unlight the Nixie
-		Point	cDIGWP			; Digit Width Pause
-DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
-		return
- 
 
 ;------ The most executed Idle routine - generate delay for desired carousel revolution
 
@@ -1143,8 +1178,10 @@ PtDelay		bsf	PORTB,bIDLE		; Set the Idle diagnostic bit
 		Jz	QuitIdle		; Yepp! Get out of here quick
 PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
 MagniLoop	Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
-		Jclr	vFlags,bQUIDLE,CoreLoop	; No quit upon Index Hole detection
+		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
+		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
+		bcf	vFlags2,bSAWIDX		; Index Hole wasn't seen
 CoreLoop	decfsz	vBzDCtr,F		; Buzzer frequency divide done yet?
 		goto	NoToggle		; Nope! Move on
 		Movlf	cBZFDIV,vBzDCtr		; Reload the Buzzer Freq Divide Ctr
@@ -1235,7 +1272,7 @@ InfLoop		Movff	vGenCtr,PORTA		; Throw the character on the display
 ;      from a leap year to a non-leap year). This can also be useful when a day-first
 ;      international date representation option is added to the firmware. (Rollover)
 		
-AdvClock	Retset	vFlags,bFROZEN		; Don't advance clock if it is Frozen
+AdvClock	Retset	vFlags2,bFROZEN		; Don't advance clock if it is Frozen
 		decfsz	vSecTck,F		; Second tick countdown reached zero?
 		return				; Nope! Get out of here
 
@@ -1250,7 +1287,7 @@ AdvClock	Retset	vFlags,bFROZEN		; Don't advance clock if it is Frozen
 		
 IncSec		incf	vSec,F			; Increment seconds
 		skipclr	vFlags,bSHORTB		;   Value is being set?
-		bsf	vFlags,bFROZEN		;   Yepp! Freeze the clock
+		bsf	vFlags2,bFROZEN		;   Yepp! Freeze the clock
 		Cmpfl	vSec,60			;   Radix reached?
 		Retnc				;   Nope! Done
 		clrf	vSec			;   Yepp! Reset counter & continue
@@ -1333,18 +1370,18 @@ ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
 		Jset	PORTB,bBUTTON,NoPress	; If button not pressed, proceed as such
 
 ; 1. Button pressed
-		Jset	vFlags,bBUTST,CntPress	; If not start of a press, keep counting
+		Jset	vFlags,bBUTST,CtPress	; If not start of a press, keep counting
 		Cmpfl	vButTck,cDBLTCK		; Press qualifies for a Double Click?
 		skipge				; Nope! Do not set the Double Click flag
 		bsf	vFlags,bDBLCLK		; Yepp! Set the Double Click flag
 		clrf	vButTck			; Reset the Button Tick Counter
 		tst	vSetPtr			; In Setting State right now?
-		Jnz	CntPress		; Yepp! No action upon start of press
-		Jclr	vFlags,bFROZEN,CntPress	; If clock is not Frozen, -"-
+		Jnz	CtPress			; Yepp! No action upon start of press
+		Jclr	vFlags2,bFROZEN,CtPress	; If clock is not Frozen, -"-
 		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec Counter
-		bcf	vFlags,bFROZEN		; Unfreeze the clock
+		bcf	vFlags2,bFROZEN		; Unfreeze the clock
 		bsf	vFlags,bCANSHT		; Cancel Short Button Event
-CntPress	bsf	vFlags,bBUTST		; Save the current button state
+CtPress		bsf	vFlags,bBUTST		; Save the current button state
 		Cmpfl	vButTck,cLNGTCK		; Long enough for Long Button event?
 		Jnz	NoLong			; Nope! Move on
 		bsf	vFlags,bLONGB		; Yepp! Set the event's flag
@@ -1384,7 +1421,7 @@ ProcButton	tst	vSetPtr			; Setting State?
 
 ; 1.1.1 Single Click
 		incf	vDspMod,F		; Advance the Display Mode
-		Cmpfl	vDspMod,cNUMMOD		; Max reached?
+		Cmpfl	vDspMod,cNUMMOD		; Maximum reached?
 		skiplt				; Nope! Display Mode is OK
 		clrf	vDspMod			; Yepp! Reset the Display Mode
 		return
@@ -1392,7 +1429,7 @@ ProcButton	tst	vSetPtr			; Setting State?
 ; 1.1.2 Double Click
 DblClk		bcf	vFlags,bDBLCLK		; Clear Double Click
 		movlw	cNUMMOD			; Undo the Display Mode increment
-		tst	vDspMod			; Currently at min?
+		tst	vDspMod			; Currently at minimum?
 		skipnz				; Nope! Display Mode is OK
 		movwf	vDspMod			; Yepp! Wrap around the Display Mode
 		decf	vDspMod,F		; Decrement the Display Mode
