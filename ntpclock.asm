@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.8.0
+; NTPClock Firmware v3.8.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -136,7 +136,7 @@ cITRPPT		equ	60*cFCLK/cCCPIC/cICPKITR/cVSPIN/cKPTPREV
 						; Loop iters per point [iter/point] {1}
 
 cSCRGAP		equ	cPTPREV*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
-cDIGWAN		equ	51			; Max angle of digit width [point]
+cDIGWAN		equ	50			; Max angle of digit width [point]
 						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTMRDIV		equ	cTMRPSC*cTMRCNT		; Total timer divider
 cTCKPS		equ	cICPS/cTMRDIV		; Ticks per sec [tick/s]
@@ -853,7 +853,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	8,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -895,20 +895,23 @@ PrintLoop	call	PrintNum		; Print the value
 		bsf	pDspHr+1,bDP		; Decimal point after hours
 		bsf	pDspMin+1,bDP		; Decimal point after minutes
 		Jclr	vFlags2,bDEVINF,NoDev	; 1. Device Info Condition
-		bsf	pDspHr,bSUPZ		; FW major value leading 0 suppressed
-		bsf	pDspMin,bSUPZ		; FW minor value leading 0 suppressed
-		bsf	pDspSec,bSUPZ		; FW subminor value leading 0 suppressed
-		bsf	pDspYr,bSUPZ		; HW subminor value leading 0 suppressed
+		bsf	pDspBuf,bSUPZ		; FW major value leading 0 suppressed
+		bsf	pDspBuf+2,bSUPZ		; FW minor value leading 0 suppressed
+		bsf	pDspBuf+4,bSUPZ		; FW subminor value leading 0 suppressed
+		bsf	pDspBuf+6,bSUPZ		; HW major value leading 0 suppressed
+		bsf	pDspBuf+8,bSUPZ		; HW minor value leading 0 suppressed
+		bsf	pDspBuf+10,bSUPZ	; HW subminor value leading 0 suppressed
+		goto	DonePT			; Done with Device Info printout
 NoDev		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
 		bsf	pDspDay,bSUPZ		; Day  value leading 0 suppressed
-		Jclr	PORTB,b1224H,Done12	; 2. The 12-hour notation
+		Jclr	PORTB,b1224H,DonePT	; 2. The 12-hour notation
 		bsf	pDspHr,bSUPZ		; Hour value leading 0 suppressed
 		Cmpfl	vHour,12		; Hour<12 (i.e., AM)?
-		Jlt	Done12			; Yepp! Do not flash the decimal points
-		Jset	vFshCtr,bFSHBIT,Done12	; Flashing bit set: DP's ON this time
+		Jlt	DonePT			; Yepp! Do not flash the decimal points
+		Jset	vFshCtr,bFSHBIT,DonePT	; Flashing bit set: DP's ON this time
 		bcf	pDspHr+1,bDP		; Turn off decimal point after hours
 		bcf	pDspMin+1,bDP		; Turn off decimal point after minutes
-Done12		return
+DonePT		return
 
 
 ;------ Print number into the Display Buffer
