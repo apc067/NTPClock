@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.8.1
+; NTPClock Firmware v3.9.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -99,7 +99,7 @@ cBZFDIV		equ	3			; Buzzer frequency divider {B}
 ; Sentinel constants
 
 cNUMMOD		equ	4			; Number of different display modes
-cNUMMUS		equ	6			; Number of different music options
+cNUMMUS		equ	5			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
@@ -270,14 +270,16 @@ cDRWID		equ	3			; # of Dur ID bits in ND (Also see {$}!)
 cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
 cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
 cISTUNE		equ	2			; Music ID of the first tune
-cISSMOO		equ	4			; Music ID of the first smooth tune
+cISSMOO		equ	3			; Music ID of the first smooth tune
+cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
+cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
 cBPM		equ	cVSPIN*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
 
 ; Notes (no pun intended):
 ;
 ; {A} Note duration multiplier: Determines how many display sides [the atomic duration
 ; of note generation] make up a 1/16 note [the shortest note that can be played], and
-; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2)
+; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
 ;
 ; {B} Buzzer frequency divider: A divider in addition to the pitch divider; picked such
 ; that octave 5 is the lowest fully covered octave (in order to improve the buzzer's
@@ -647,7 +649,7 @@ NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	6*cDRMUL		; 3/8
 		retlw	8*cDRMUL		; 1/2
 		retlw	12*cDRMUL		; 3/4
-		retlw	64*cDRMUL		; 1
+		retlw	16*cDRMUL		; 1
 
 ;---- Manic Miner tune lookup table
 
@@ -710,50 +712,30 @@ ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	N(B5,V1_2)
 		retlw	ENDTUNE
 
-;---- Jet Set Willy tune lookup table
+;---- A-Note Test "tune" lookup table
 
 ; Input:  W = Tune Pointer [tune note index]
 ; Output: W = Note Descriptor of corresponding note
 
-JetSetTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+ATestTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	N(A4,V1)
-		retlw	ENDTUNE
-
-;---- Woodycock tune lookup table
-
-; Input:  W = Tune Pointer [tune note index]
-; Output: W = Note Descriptor of corresponding note
-
-WoodyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(A4,V1)
+		retlw	N(A4,V1)
+		retlw	N(A4,V1)
+		retlw	N(A4,V1)
+		retlw	N(A4,V1)
 		retlw	N(A5,V1)
-		retlw	ENDTUNE
-
-;---- Shimmy tune lookup table
-
-; Input:  W = Tune Pointer [tune note index]
-; Output: W = Note Descriptor of corresponding note
-
-ShimmyTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	N(0,7)
-		retlw	N(2,7)
-		retlw	N(4,7)
-		retlw	N(5,7)
-		retlw	N(7,7)
-		retlw	N(9,7)
-		retlw	N(11,7)
-		retlw	N(12,7)
-		retlw	N(14,7)
-		retlw	N(16,7)
-		retlw	N(17,7)
-		retlw	N(19,7)
-		retlw	N(21,7)
-		retlw	N(23,7)
-		retlw	N(24,7)
-		retlw	N(26,7)
-		retlw	N(28,7)
-		retlw	N(29,7)
-		retlw	N(31,6)
-		retlw	N(31,6)
+		retlw	N(A5,V1)
+		retlw	N(A5,V1)
+		retlw	N(A5,V1)
+		retlw	N(A5,V1)
+		retlw	N(A5,V1)
+		retlw	N(A6,V1)
+		retlw	N(A6,V1)
+		retlw	N(A6,V1)
+		retlw	N(A6,V1)
+		retlw	N(A6,V1)
+		retlw	N(A6,V1)
 		retlw	ENDTUNE
 
 
@@ -852,8 +834,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	8,vMin
-		Movlf	1,vSec
+		Movlf	9,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1004,7 +986,7 @@ DateSd0		comf	vCurNum,F		; Desired output is date
 TimeSd0		skipclr	vFlags2,bSDCNT		; Outputting Side 0?
 		comf	vCurNum,F		; Nope! Desired output is the opposite
 		tst	vCurNum			; Is the desired output time?
-		Jz	PtrDone			; Yepp! Nointer is at the right position
+		Jz	PtrDone			; Yepp! Pointer is at the right position
 		Movlf	pDspBuf+6,vDspPtr	; Nope! Display Buffer pointer to date
 PtrDone		Point	cPRESP			; Pre-String Pause
 		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
@@ -1019,10 +1001,12 @@ PtrDone		Point	cPRESP			; Pre-String Pause
 		call	OutputNum		; 3rd number
 		call	OutputSup		; Post-String Suppressed Digits Pause
 		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
+		Cmpfl	vMsType,cATST		; Is it a test music option?
+		Jge	TestMus			; Yepp! Don't turn buzzer off at all
 		tst	vNoteDr			; Currently played note is over?
 		skipnz				; Nope! Don't turn buzzer off yet
 		call	BuzzerOff		; Turn buzzer off
-		call	IsScroll		; Display is Scrolling?
+TestMus		call	IsScroll		; Display is Scrolling?
 		Jz	ScrollDisp		; Yepp! Handle that case separately
 		bsf	vFlags2,bQUIDLE		; Nope! Index Hole quits Idle (*)
 		Point	cPOSTSP			; "Soft" Post-String Pause
@@ -1124,26 +1108,19 @@ SoundMusic	call	BuzzerOff		; Start by assuming that buzzer is off
 PlayTune	tst	vNoteDr			; Currently played note is over?
 		Jnz	PlayNote		; Nupp! Keep playing it
 RefetchNote	Cmpfl	vMsType,3		; Music option #2?
-		Jge	Music3			; Nupp! Try the next tune
+		Jge	Music3			; Nupp! Try the next option
 		movf	vTnPtr,W		; Get the Tune Pointer
-		call	ManicTuneLut		; Play next note in the Manic Miner tune
+		call	ManicTuneLut		; Play next note in the tune
 		goto	ProcessNote		; Process the note
-Music3		Cmpfl	vMsType,4		; Music option #3?
-		Jge	Music4			; Nupp! Try the next tune
+Music3		; *** Next music option here!
+ATest		Cmpfl	vMsType,cPCHTST		; Music option A-Note Test?
+		Jge	PchTest			; Nupp! Try the next option
 		movf	vTnPtr,W		; Get the Tune Pointer
-		call	JetSetTuneLut		; Play next note in Jet Set Willy tune
+		call	ATestTuneLut		; Play next note in the tune
 		goto	ProcessNote		; Process the note
-Music4		Cmpfl	vMsType,5		; Music option #4?
-		Jge	Music5			; Nupp! Try the next tune
-		movf	vTnPtr,W		; Get the Tune Pointer
-		call	WoodyTuneLut		; Play next note in the Woodycock tune
-		goto	ProcessNote		; Process the note
-Music5		Cmpfl	vMsType,6		; Music option #5?
-		Jge	Music6			; Nupp! Try the next tune
-		movf	vTnPtr,W		; Get the Tune Pointer
-		call	ShimmyTuneLut		; Play next note in the Shimmy tune
-		goto	ProcessNote		; Process the note
-Music6		goto	CritErr			; There is no music option #6 as of yet!
+PchTest		Movff	vTnPtr,vBzWid		; Use vTnPtr as free-running pitch ctr
+		decf	vTnPtr,F		; Increase the pitch
+		goto	SoundPitch		; Sound the current pitch
 ProcessNote	movwf	vBzWid			; Capture note Pitch ID from Note Descr.
 		movwf	vNoteDr			; Capture the note Duration ID from N.D.
 		Cmpfl	vBzWid,ENDTUNE		; Currently played tune over?
@@ -1167,7 +1144,7 @@ SoundNote	tst	vMsType			; Music type is 0 (Silence)?
 		Retz 				; Yepp! Do not turn buzzer on
 		tst	vBzWid			; Current note is a pause?
 		skipz				; Yepp! Do not turn buzzer on
-		call	BuzzerOn		; Turn buzzer on
+SoundPitch	call	BuzzerOn		; Turn buzzer on
 		return
 
 
