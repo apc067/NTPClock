@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.0
+; NTPClock Firmware v3.9.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -86,6 +86,11 @@
 ; Definitions
 ;***************************************************************************************
 
+;==== Debug Control ====================================================================
+
+DDEBUG		equ	0			; Display Debug (stretch time by 64)
+
+
 ;==== Constants ========================================================================
 
 ; Customization constants
@@ -103,7 +108,7 @@ cNUMMUS		equ	5			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
-cMAGCNT		equ	1			; Normal-1, Debug-64 (0.5 sec/digit)
+cMAGCNT		equ	64			; Stretch time to 0.5 sec/digit
 
 ; System constants
 
@@ -835,7 +840,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	9,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1156,8 +1161,12 @@ PtDelay		bsf	PORTB,bIDLE		; Set the Idle diagnostic bit
 		movwf	vPntCtr			; Load number of points
 		tst	vPntCtr			; Is it 0?
 		Jz	QuitIdle		; Yepp! Get out of here quick
-PointLoop	Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (for debug)
-MagniLoop	Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
+PointLoop	
+	if DDEBUG
+		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (Debug only)
+MagniLoop
+	endif
+		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
 		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
@@ -1172,8 +1181,10 @@ CoreLoop	decfsz	vBzDCtr,F		; Buzzer frequency divide done yet?
 		xorwf	PORTB,F
 NoToggle	decfsz	vItrCtr,F		; 1 point passed yet?		
 		goto	CoreLoop		; Nope! Stay in the Core Loop
-		decfsz	vMagCtr,F		; Magnification done yet?
+	if DDEBUG
+		decfsz	vMagCtr,F		; Magnification done yet? (Debug only)
 		goto	MagniLoop		; Nope! Stay in loop
+	endif
 		decfsz	vPntCtr,F		; Point delay passed yet?
 		goto	PointLoop		; Nope! Stay in loop
 QuitIdle	bcf	PORTB,bIDLE		; Clear the Idle diagnostic bit
