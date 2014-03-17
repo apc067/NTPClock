@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.1
+; NTPClock Firmware v3.9.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -98,8 +98,8 @@ DDEBUG		equ	0			; Display Debug (stretch time by 64)
 cVSCRL		equ	4			; Display scroll speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
-cDRMUL		equ	1			; Note duration multiplier {A}			
-cBZFDIV		equ	3			; Buzzer frequency divider {B}
+cDRMUL		equ	1			; Note duration multiplier {1}			
+cPDMUL		equ	3			; Buzzer pitch divider multiplier {2}
 
 ; Sentinel constants
 
@@ -115,8 +115,7 @@ cMAGCNT		equ	64			; Stretch time to 0.5 sec/digit
 cFCLK		equ	19660800		; Clock freq (cycles per second) [cc/s]
 cVSPIN		equ	360			; Carousel rotation speed [rev/min]
 cCCPIC		equ	4			; Clock cycles per instr cycle [cc/ic]
-cICPKITR	equ	7508			; Instr cyc per 1000 iter [ic/kiter] {1}
-cPTPREV		equ	2000			; Points per revolution [point/krev] {1}
+cPTPREV		equ	2000			; Points per revolution [point/rev]
 cSDPREV		equ	2			; Display sides per revolution [sd/rev]
 
 ; Geometrical constants
@@ -135,10 +134,8 @@ cTMRCNT		equ	256			; Timer0 required count (Just max out)
 
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
 cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
-cKPTPREV	equ	cPTPREV/1000		; 1000 points per rev [kpoint/krev] {1}
 
-cITRPPT		equ	60*cFCLK/cCCPIC/cICPKITR/cVSPIN/cKPTPREV
-						; Loop iters per point [iter/point] {1}
+cITRPPT		equ	54			; Loop iters per point [iter/point] {2}
 
 cSCRGAP		equ	cPTPREV*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
@@ -165,42 +162,42 @@ cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
 cPSP		equ	cSCRGAP			; Post-Side Pause
 cPOSTSP		equ	cPRESP-cPSP		; Post-String Pause
-cREVCOR		equ	8			; Revolution Correction {2}
-cPRXCOR		equ	80			; Index Hole Parallax Correction {3}
+cREVCOR		equ	27			; Revolution Correction {3}
+cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
  		
- 		if	cPRESP>255 		; Check the value of cPRESP {4}
+ 		if	cPRESP>255 		; Check the value of cPRESP {5}
 		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
 		endif
 
 ; Notes:
 ;
-; {1} Number of PtDelay Inner Loop iterations per point, calculated based on the
-; following logic (with not all intermediate quantities explicitly defined):
+; {1} Note duration multiplier: Determines how many display sides [the atomic duration
+; of note generation] make up a 1/16 note [the shortest note that can be played], and
+; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
 ;
-; cICPS = cFCLK/cCCPIC          Instruction cycles per sec [ic/s]
-; cITRPS = cICPS/cICPITR        Loop iterations per sec [iter/s]
-; cPTPS = cVSPIN*cPTPREV/60     Points per sec [point/s]
+; {2} The PtDelay Inner Loop Iterations Per Point (IterPerPoint, a.k.a. cITRPPT), the
+; Pitch Divider Multiplier (PitchDivMul, a.k.a. cPDMUL) and the individual Pitch
+; Dividers (PitchDiv) are determined throught the following equations:
 ;
-; therefore
+;    ICPerIter = 6 + 7 / IterPerPoint + ( 4 + 3 / PitchDiv ) / PitchDivMul    (1)
+;    IterPerPoint = IC_PER_SEC / ( POINT_PER_SEC * ICPerIter )                (2)
+;    f(PitchDiv) = IC_PER_SEC / ( 2 * PitchDivMul * PitchDiv * ICPerIter )    (3)
+;    f(256) >~ 390                                                            (4)
 ;
-; cITRPPT = cITRPS/cPTPS        Loop iterations per point [iter/point]
-;         = 60*cFCLK / cCCPIC*cICPITR*cVSPIN*cPTREV
+; The constants in (1) represent instruction cycles of loop execution in PtDelay;
+; Intruction Cycles Per Second (IC_PER_SEC, a.k.a. cICPS) and Points Per Second
+; (POINT_PER_SEC) are known values. Equation (4) states that the lowest frequency
+; that can be played should be around 390 Hz or slightly higher (due to the buzzer's
+; properties).
 ;
-; but
-; 
-; a) The effective number of instruction cycles per iteration (cICPITR) is a fractional
-; value, taking into account the varying evaluation of the differen conditionals;
-; therefore this value is better taken over a 1000 iterations instead (cICPKITR).
-; 
-; b) To compensate for the above, the number of points per revolution (cPTPREV) quantity
-; in the formula is replaced by the number of 1000 points per revolution (cKPTPREV),
-; which is a round 2 by definition.
+; All values except ICPerIter are integers. IterPerPoint should be smaller than its
+; ideal value, so that Revolution Correction (see {3}) becomes positive as desired.
+; Technically speaking, IterPerPoint is also a function of PitchDiv. However, by
+; putting the PitchDivMul counting "at a lower order" than the PitchDiv counting, a
+; much higher execution time stability is achieved, and IterPerPoint remains the same
+; across the PitchDivider values of all reasonable frequencies.
 ;
-; Therefore
-;
-; cITRPPT = 60*cFCLK / cCCPIC*cICPKITR*cVSPIN*cKPTREV
-;
-; {2} The final Idle delay within a full display cycle, which is a "shim" factor to
+; {3} The final Idle delay within a full display cycle, which is a "shim" factor to
 ; synchronize the angular speed of display generation to the angular speed of the
 ; carousel as much as possible. It accounts for the truncation error of the cITRPPT
 ; value, as well as for all the instruction cycles not spent in the Idle-code (which
@@ -213,14 +210,14 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {3}
 ; fine-tuning the display synchronity will maximize the correctness of the specified
 ; display scroll angular speed (cVSCRL) for the scrolling display modes.
 ;
-; {3} Correction factor compensating for the fact that while the "Index Hole" IR LED is
+; {4} Correction factor compensating for the fact that while the "Index Hole" IR LED is
 ; positioned such that it perfectly lines up with the photodiode when the longer edge of
 ; the rotating circuit board is parallel to the front of the floppy drive [the starting
 ; position of display generation], the photodiode begins to "see" the IR LED even before
 ; perfect alignment. It is tuned by finding the value, where the middle of the display
 ; sections in Alternating Mode line up with the middle of the floppy drive.
 ;
-; {4} The Pre-String Pause is the longest delay during display generation. If its value
+; {5} The Pre-String Pause is the longest delay during display generation. If its value
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
@@ -279,16 +276,6 @@ cISSMOO		equ	3			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
 cBPM		equ	cVSPIN*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
-
-; Notes (no pun intended):
-;
-; {A} Note duration multiplier: Determines how many display sides [the atomic duration
-; of note generation] make up a 1/16 note [the shortest note that can be played], and
-; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
-;
-; {B} Buzzer frequency divider: A divider in addition to the pitch divider; picked such
-; that octave 5 is the lowest fully covered octave (in order to improve the buzzer's
-; performance)
 
 ; Tune definition formalism
 
@@ -495,7 +482,7 @@ vTnPtr		equ	0x39			; Tune Pointer (Along current tune LUT)
 vNoteDr		equ	0x40			; Current note's [remaining] duration
 vBzCtr		equ	0x41			; Buzzer Half-Cycle Counter [iter]
 vBzWid		equ	0x42			; Buzzer half-cycle width [iter]
-vBzDCtr		equ	0x43			; Buzzer Frequency Divide Counter
+vPDMCtr		equ	0x43			; Buzzer Pitch Div Multiplier Counter
 
 ; Music types:
 ;
@@ -602,43 +589,43 @@ DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	G6			; Digit 8
 		retlw	A6			; Digit 9
 
-;---- Note Pitch ID to pitch divider lookup table
+;---- Note Pitch ID to pitch divider lookup table {2}
 
 ; Input:  W = Pitch ID
 ; Output: W = Pitch divider
 
 NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	248
-		retlw	234
-		retlw	221
-		retlw	209
-		retlw	197
-		retlw	186
-		retlw	175
-		retlw	166
-		retlw	156
-		retlw	147
-		retlw	139
-		retlw	131
-		retlw	124
-		retlw	117
-		retlw	110
-		retlw	104
-		retlw	98
-		retlw	93
-		retlw	88
-		retlw	83
-		retlw	78
-		retlw	74
-		retlw	70
-		retlw	66
-		retlw	62
-		retlw	59
-		retlw	55
-		retlw	52
-		retlw	49
-		retlw	46
-		retlw	44
+		retlw	249			; A4
+		retlw	235			; A#4
+		retlw	222			; B4
+		retlw	210			; C5
+		retlw	198			; C#5
+		retlw	187			; D5
+		retlw	176			; D#5
+		retlw	166			; E5
+		retlw	157			; F5
+		retlw	148			; F#5
+		retlw	140			; G5
+		retlw	132			; G#5
+		retlw	125			; A5
+		retlw	118			; A#5
+		retlw	111			; B5
+		retlw	105			; C6
+		retlw	99			; C#6
+		retlw	93			; D6
+		retlw	88			; D#6
+		retlw	83			; E6
+		retlw	78			; F6
+		retlw	74			; F#6
+		retlw	70			; G6
+		retlw	66			; G#6
+		retlw	62			; A6
+		retlw	59			; A#6
+		retlw	55			; B6
+		retlw	52			; C7
+		retlw	49			; C#7
+		retlw	47			; D7
+		retlw	44			; D#7
 		retlw	0			; Pause (not used as a divide-by-256)
 
 ;---- Note Duration ID to duration count lookup table
@@ -775,7 +762,7 @@ Start		Movlf	cSPACE,PORTA		; Blank the Nixie
 		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		clrf	vButTck			; Clear the Button Hold Tick Counter
 		clrf	vBzCtr			; Clear the Buzzer Half-Cycle Counter
-		Movlf	cBZFDIV,vBzDCtr		; Load the Buzzer Freq Divide Ctr
+		Movlf	cPDMUL,vPDMCtr		; Load the Pitch Div Multiplier Counter
 		clrf	vMsType			; Music Type = Silence
 		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
 		clrf	vTnPtr			; Reset the Tune Pointer
@@ -840,7 +827,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	9,vMin
-		Movlf	1,vSec
+		Movlf	2,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1101,6 +1088,9 @@ SoundMusic	call	BuzzerOff		; Start by assuming that buzzer is off
 		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
+		tst	vMsType			; Music type is 0 (Silence)?
+		skipnz				; Nupp! Sound the actual digit
+		movlw	5			; Yepp! "Sound" a medium pitch silently
 		call	DigPitchIDLut		; Look up the digit's Pitch ID
 		call	NotePitchLut		; Look up the Pitch ID's pitch divider
 		movwf	vBzWid			; Apply it to the current sound
@@ -1108,7 +1098,6 @@ SoundMusic	call	BuzzerOff		; Start by assuming that buzzer is off
 		Cmpfl	vCrpPtr,pDspBuf+12	; Reached the end of the Display Buffer?
 		Jnz	SoundNote		; Nope! Don't reset the Chirp Pointer
 		Movlf	pDspBuf,vCrpPtr		; Yepp! Back to the start of the Display
-		clrf	vNoteDr			; Make the Chirpie choppy (1 for smooth)
 		goto	SoundNote		; Sound that note
 PlayTune	tst	vNoteDr			; Currently played note is over?
 		Jnz	PlayNote		; Nupp! Keep playing it
@@ -1171,9 +1160,9 @@ MagniLoop
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
 		bcf	vFlags2,bSAWIDX		; Index Hole wasn't seen
-CoreLoop	decfsz	vBzDCtr,F		; Buzzer frequency divide done yet?
+CoreLoop	decfsz	vPDMCtr,F		; Buzzer pitch div multiplier done yet?
 		goto	NoToggle		; Nope! Move on
-		Movlf	cBZFDIV,vBzDCtr		; Reload the Buzzer Freq Divide Ctr
+		Movlf	cPDMUL,vPDMCtr		; Reload the Pitch Div Multipler Ctr
 		decfsz	vBzCtr,F		; Buzzer half-cycle done yet?
 		goto	NoToggle		; Nope! Move on
 		Movff	vBzWid,vBzCtr		; Reload the Buzzer Half-Cycle Counter
