@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.2
+; NTPClock Firmware v3.9.3
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -827,7 +827,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	9,vMin
-		Movlf	2,vSec
+		Movlf	3,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -862,6 +862,9 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
+		
+		clrf	vYear
+		
 ; *** End of critical section for Clock Memory access
 		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
@@ -1155,6 +1158,10 @@ PointLoop
 		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (Debug only)
 MagniLoop
 	endif
+
+		skipset	PORTB,bINDEXH
+		incf	vYear,F	
+
 		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
 		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
