@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.5
+; NTPClock Firmware v3.10.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -117,6 +117,8 @@ cVSPIN		equ	360			; Carousel rotation speed [rev/min]
 cCCPIC		equ	4			; Clock cycles per instr cycle [cc/ic]
 cPTPREV		equ	2000			; Points per revolution [point/rev]
 cFLPREV		equ	2			; Fields per revolution [fld/rev]
+cPTPFLD		equ	cPTPREV/cFLPREV		; Points per field [point/fld]
+
 
 ; Geometrical constants
 
@@ -137,7 +139,7 @@ cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 
 cITRPPT		equ	54			; Loop iters per point [iter/point] {2}
 
-cSCRGAP		equ	cPTPREV*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
+cSCRGAP		equ	cPTPFLD*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
 						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTMRDIV		equ	cTMRPSC*cTMRCNT		; Total timer divider
@@ -159,12 +161,16 @@ cHDIGP		equ	cDIGIT/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
-cPRESP		equ	(cPTPREV/cFLPREV-cSTRING)/2	; Pre-String Pause
-cPOSTSP		equ	cPRESP-cSCRGAP		; Post-String Pause
-cREVCOR		equ	27			; Revolution Correction {3}
+cPRESP		equ	(cPTPFLD-cSTRING)/2	; Pre-String Pause
+cREVCOR		equ	13			; Revolution Correction {3}
+cPOSTSP		equ	cPRESP-cSCRGAP		; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
+cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
+cSHPSP1		equ	cPRESP-cPRXCOR-5	; Short Post-String Pause #1 {5}
+cSHPSP2		equ	cPRESP-cSHPSP1-cRBIDXP	; Short Post-String Pause #2 {5}
+cCATCHP		equ	6*cSCRGAP		; Stat display resync catchup pause (5}
  		
- 		if	cPRESP>255 		; Check the value of cPRESP {5}
+ 		if	cPRESP>255 		; Check the value of cPRESP {6}
 		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
 		endif
 
@@ -196,7 +202,7 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 ; much higher execution time stability is achieved, and IterPerPoint remains the same
 ; across the PitchDivider values of all reasonable frequencies.
 ;
-; {3} The final Idle delay within a full display cycle, which is a "shim" factor to
+; {3} The Idle delay within a field's display cycle, which is a "shim" factor to
 ; synchronize the angular speed of display generation to the angular speed of the
 ; carousel as much as possible. It accounts for the truncation error of the cITRPPT
 ; value, as well as for all the instruction cycles not spent in the Idle-code (which
@@ -214,9 +220,32 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 ; the rotating circuit board is parallel to the front of the floppy drive [the starting
 ; position of display generation], the photodiode begins to "see" the IR LED even before
 ; perfect alignment. It is tuned by finding the value, where the middle of the display
-; sections in Alternating Mode line up with the middle of the floppy drive.
+; fields in Stationary behavior line up with the depth-wise middle of the floppy drive.
 ;
-; {5} The Pre-String Pause is the longest delay during display generation. If its value
+; {5} These parameters control the behavior, whereby switching to Stationary display
+; behavior the display will begins to right-scroll quickly until the correct alignment
+; is achieved. The parameters are as follows:
+; 
+;  - cRBIDXP: The length of the pause ("Rubber Pause" for short) that is executing while
+;    expecting the Index Hole. It determines the speed of the left-scroll "snap-back",
+;    when the display is already too much to the right, but the Index Hole is still
+;    being seen. For properly stabilizing the display, the length and position of this
+;    pause should be set such that the start of the Index Hole's visibility always
+;    occurs during this pause, and its maximum length is limited to the values, where
+;    cSHPSP2 does not go negative. Otherwise, the length of this pause is flexible.
+;  - cCATCHP: The length of the pause that is inserted to create the right-scroll, when
+;    the Index Hole was not seen when it was supposed to be. This length determines the
+;    speed of this "catch-up" right-scroll (but since it is only inserted during the
+;    displaying of Field 1, its effect on the speed is half of that of cSCRGAP).
+;  - cSHPSP1: Determines when to start expecting the Index Hole by the Rubber Pause. If
+;    it is so early that the Rubber Pause already ended even before the Index Hole was
+;    seen, the display will become jittery. Conversely, if it is so late that the the
+;    start of the Index Hole's visibility was missed, the display will right-scroll
+;    slowly (with a speed determined by the amount of lateness), until the Rubber Pause
+;    completely misses the Index Hole's visibility, at which point the catchup right-
+;    scroll will take over, and repeat the same for the opposite display field.
+; 
+; {6} The Pre-String Pause is the longest delay during display generation. If its value
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
@@ -234,7 +263,7 @@ cDIGMSK		equ	cDPMSK-1		; Digit mask (excl. attributes)
 cSUPMSK		equ	1<<bSUPZ		; Suppress If Zero attribute's bit mask
 cXDMSK		equ	(1<<bFLASH)-1		; Extended digit mask (incl. attributes)
 
-bFSHBIT		equ	2			; Flashing Char Counter's desired bit
+bFSHBIT		equ	3			; Flashing Char Counter's desired bit
 cFSHON		equ	1<<bFSHBIT		; Initial value of above to turn char on
 
 ; vFlags bit constants
@@ -426,7 +455,7 @@ vFshCtr		equ	0x1E			; Flashing Char Counter
 
 ; Notes:
 ;
-; vFshCtr is a [typically] free-running counter incremented in every display cycle,
+; vFshCtr is a [usually] free-running counter incremented in every field display cycle,
 ; whose bit selected by bFSHBIT is the base to turn a flashing character on & off.
 ; Bit=0: Character on, Bit=1: Character off
 ;
@@ -784,7 +813,7 @@ DevInfLoop	Jset	vFlags,bSHORTB,OrigRls	; Original button already released?
 		goto	DoneOrig		; End of "original button still pressed"
 OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
 DoneOrig	call	PrintTime		; Device info -> Display Buffer
-		call	OutputBuff		; Display Buffer -> Nixie
+		call	OutputField		; Display Buffer -> Nixie
 		goto	DevInfLoop		; Device Info Loop iteration done
 QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
@@ -802,7 +831,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 ;---- The Main Loop --------------------------------------------------------------------
 
 MainLoop	call	PrintTime		; Time Memory -> Display Buffer
-		call	OutputBuff		; Display Buffer -> Nixie
+		call	OutputField		; Display Buffer -> Nixie
 		goto	MainLoop		; Main Loop iteration done
 
 ; Note: In this very simple case, there is no need to hook up the detection of the Index
@@ -825,8 +854,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	9,vMin
-		Movlf	5,vSec
+		Movlf	10,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -945,11 +974,6 @@ PrintDig	Movff	vDspPtr,FSR
 
 ;---- Output the Display Buffer to the Nixie -------------------------------------------
 
-OutputBuff	call	OutputField		; Output one field
-		call	OutputField		; Output the other field
-		return
-
-
 ;------ Output Field (& play the selected music)
 
 ; Input:  vDspPtr points to current field's string in the Display Buffer
@@ -991,25 +1015,26 @@ PtrDone		Point	cPRESP			; Pre-String Pause
 		call	OutputSup		; Post-String Suppressed Digits Pause
 		Movff	FSR,vDspPtr		; Save current Display Buffer pointer
 		Cmpfl	vMsType,cATST		; Is it a test music option?
-		Jge	TestMus			; Yepp! Don't turn buzzer off at all
+		Jge	PostStr			; Yepp! Don't turn buzzer off at all
 		tst	vNoteDr			; Currently played note is over?
 		skipnz				; Nope! Don't turn buzzer off yet
 		call	BuzzerOff		; Turn buzzer off
-TestMus		call	IsScroll		; Display is Scrolling?
+PostStr		Point	cREVCOR			; Start with Revolution Correction
+		call	IsScroll		; Display is Scrolling?
 		Jz	ScrollDisp		; Yepp! Handle that case separately
-		bsf	vFlags2,bQUIDLE		; Nope! Index Hole quits Idle (*)
-		Point	cPOSTSP			; "Soft" Post-String Pause
+		Point	cSHPSP1			; Short Post-String Pause #1
+		bsf	vFlags2,bQUIDLE		; Index Hole quits Idle (4)
+		Point	cRBIDXP			; Rubber Index Hole Expectation Pause
 		bcf	vFlags2,bQUIDLE		; Cancel Index Hole quitting Idle
-		Jclr	vFlags2,bFLDCNT,OutFld0	; Is this Field 0?
-		Point	cPRXCOR			; Nope! Uncond. Idx Hole Parallax Corr
-OutFld0		Jclr	vFlags2,bSAWIDX,OneGap	; Index Hole was not seen - 1 Gap & done
-		Jset	vFlags2,bFLDCNT,OutFld1	; Index Hole seen; is this Field 1?
-		Point	cPRXCOR			; Nope! Idx Hole Parallax Corr still due
-OutFld1		bcf	vFlags2,bFLDCNT		; Upcoming field must be #0 [again]
+		Jset	vFlags2,bSAWIDX,SawIdx	; Index Hole was seen?
+		Point	cSHPSP2			; Nope! Expect normal spin if Field 0
+		Jclr	vFlags2,bFLDCNT,ZeroGap	; Field 0 indeed - no more pause
+		Point	cCATCHP			; Stationary display resync catchup
+		goto	ZeroGap			; Done with pauses for this scenario
+SawIdx		Point	cPRXCOR			; Yepp! Idx Hole Parallax Corr needed
+		bcf	vFlags2,bFLDCNT		; Upcoming field must be #0 [again]
 		return
 ScrollDisp	Point	cPOSTSP			; Post-String Pause
-		Jclr	vFlags2,bFLDCNT,OneGap	; Field 0 - standard single Gap
-		Point	cREVCOR			; Field 1 - start w/ Revolution Corr
 		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
 		Jz	OneGap			; Yepp! 1 Gap
 		Jlt	ZeroGap			; Left-Scroll: 0 Gaps
@@ -1018,14 +1043,6 @@ OneGap		Point	cSCRGAP			; Stand-Scroll: 1 Gap
 ZeroGap		movlw	cFLDMSK			; Invert the Field Count bit
 		xorwf	vFlags2,F
 		return
-
-; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
-; the Index Hole starts being seen even before the back field's Post-String Pause is
-; over. The only time this is not the case is when switching from the Right-Scrolling to
-; the Alternating display mode. However, instead of having a spinning loop to wait for
-; the Index Hole to show up, we just let the display that is scrolling right (this time
-; due to the superfluous Index Hole Parallax Correction) gradually bring itself to the
-; right orientation (while the music never stops even for a split second).
 
 
 ;------ Output Suppressed Digits Pause
@@ -1241,8 +1258,8 @@ InfLoop		Movff	vGenCtr,PORTA		; Throw the character on the display
 ;------ Advance the clock
 
 ; Note: Special entry points from ProcButton:
-;   1. Inc*: Called when the clock is being set. (No rollover)
-;   2. AdjustDay: Called upon return to Running State, to compensate for the infamous
+;   1. Inc*: Jumped to when the clock is being set. (No rollover)
+;   2. AdjustDay: Jumped to upon return to Running State, to compensate for the infamous
 ;      "leap year egress" (after setting the date to February 29, the year is changed
 ;      from a leap year to a non-leap year). This can also be useful when a day-first
 ;      international date representation option is added to the firmware. (Rollover)
@@ -1297,12 +1314,15 @@ IncYear		incf	vYear,F			; Increment year
 
 ;------ Check day rollover
 
-; ATTENTION! Normally this would be a subroutine, but... we ran out of stack. :-(
-; (Fortunately, it is only called from one point...)
+; ATTENTION! Normally this would be a subroutine, but since it is only called from one
+; point, and it is also part of the longest branch of the interrupt context's call tree,
+; it offers a great opportunity to trim this call tree, and thus save stack for the
+; background context.
 
 ; Note: This "subroutine" assumes that every year that is divisible by 4 is a leap
 ; year. Therefore, while it would have worked perfectly in the special year 2000 (had
-; this clock been born before 2000), it will not work correctly in year 2100!
+; this clock been born before 2000), it will not work correctly in year 2100 (should
+; we still be around to be inconvenienced by it...)!
 
 ; Output: 
 ;  - Z set if current day just rolled over
