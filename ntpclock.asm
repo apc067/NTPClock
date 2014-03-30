@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.3
+; NTPClock Firmware v3.9.4
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -51,7 +51,7 @@
 ;    - 24-hour: "12/24h" Jumper on
 ;
 ; 2. Display Mode
-;    - Alternating:  vDspMod = 0 (Stationary display with alternating date/time sides)
+;    - Alternating:  vDspMod = 0 (Stationary display w/ alternating date/time fields)
 ;    - Left-Scroll:  vDspMod = 1
 ;    - Stand-Scroll: vDspMod = 2 (Quasi-stationary - for fun / to tune display timing)
 ;    - Right-Scroll: vDspMod = 3
@@ -116,7 +116,7 @@ cFCLK		equ	19660800		; Clock freq (cycles per second) [cc/s]
 cVSPIN		equ	360			; Carousel rotation speed [rev/min]
 cCCPIC		equ	4			; Clock cycles per instr cycle [cc/ic]
 cPTPREV		equ	2000			; Points per revolution [point/rev]
-cSDPREV		equ	2			; Display sides per revolution [sd/rev]
+cFLPREV		equ	2			; Fields per revolution [fld/rev]
 
 ; Geometrical constants
 
@@ -159,9 +159,8 @@ cHDIGP		equ	cDIGIT/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
-cPRESP		equ	(cPTPREV/2-cSTRING)/2	; Pre-String Pause
-cPSP		equ	cSCRGAP			; Post-Side Pause
-cPOSTSP		equ	cPRESP-cPSP		; Post-String Pause
+cPRESP		equ	(cPTPREV/cFLPREV-cSTRING)/2	; Pre-String Pause
+cPOSTSP		equ	cPRESP-cSCRGAP		; Post-String Pause
 cREVCOR		equ	27			; Revolution Correction {3}
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
  		
@@ -171,8 +170,8 @@ cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 
 ; Notes:
 ;
-; {1} Note duration multiplier: Determines how many display sides [the atomic duration
-; of note generation] make up a 1/16 note [the shortest note that can be played], and
+; {1} Note duration multiplier: Determines how many fields [the atomic duration of
+; note generation] make up a 1/16 note [the shortest note that can be played], and
 ; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
 ;
 ; {2} The PtDelay Inner Loop Iterations Per Point (IterPerPoint, a.k.a. cITRPPT), the
@@ -248,8 +247,8 @@ bCANSHT		equ	4			; Cancel Short Button Event flag's bit#
 
 ; vFlags2 bit constants
 
-bSDCNT		equ	0			; Side Count flag's bit#
-cSDMSK		equ	1<<bSDCNT		; Side Count flag's bit mask
+bFLDCNT		equ	0			; Field Count flag's bit#
+cFLDMSK		equ	1<<bFLDCNT		; Field Count flag's bit mask
 bFROZEN		equ	1			; Frozen Clock Condition flag's bit#
 bDEVINF		equ	2			; Device Info Condition flag's bit#
 bQUIDLE		equ	3			; Idx Hole Should Quit Idle flag's bit#
@@ -275,7 +274,7 @@ cISTUNE		equ	2			; Music ID of the first tune
 cISSMOO		equ	3			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
-cBPM		equ	cVSPIN*cSDPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
+cBPM		equ	cVSPIN*cFLPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
 
 ; Tune definition formalism
 
@@ -389,10 +388,10 @@ vFlags2		equ	0x0F			; System flags #2
 ; vFlags2:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         - - - I Q N F S
+;         - - - I Q N R F
 ;
-;         S (0): Side Count flag [1-bit side counter: 0-front, 1-back]
-;         F (1): Frozen Clock Condition flag
+;         F (0): Field Count flag [1-bit counter: 0-front, 1-back]
+;         R (1): Frozen Clock Condition flag
 ;         N (2): Device Info Condition flag
 ;         Q (3): Index Hole Should Quit Idle ("Quidle") flag
 ;         I (4): Saw Index Hole During Quidle flag
@@ -631,7 +630,7 @@ NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ;---- Note Duration ID to duration count lookup table
 
 ; Input:  W = Duration ID
-; Output: W = Duration count [sd]
+; Output: W = Duration count [fld]
 
 NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	1*cDRMUL		; 1/16
@@ -827,7 +826,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	9,vMin
-		Movlf	3,vSec
+		Movlf	4,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -862,9 +861,6 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
-		
-		clrf	vYear
-		
 ; *** End of critical section for Clock Memory access
 		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
@@ -951,34 +947,34 @@ PrintDig	Movff	vDspPtr,FSR
 
 ;------ Infamy #2: Output the Display Buffer's content to the Nixie
 
-OutputBuff	call	OutputSide		; Output one side
-		call	OutputSide		; Output the other side
+OutputBuff	call	OutputField		; Output one field
+		call	OutputField		; Output the other field
 		return
 
 
-;------ Output Side (& play the selected music)
+;------ Output Field (& play the selected music)
 
-; Input:  vDspPtr = Beginning of current side in the Display Buffer
-; Output: vDspPtr points to the position beyond current side
+; Input:  vDspPtr = Points to current field's string in the Display Buffer
+; Output: vDspPtr points to beyond current field's string
 ;
 ; Note: Also plays the selected tune [or Chirpie]
 
-OutputSide	call	SoundMusic		; Sound that music for the side		
+OutputField	call	SoundMusic		; Sound that music for the field		
 		Movlf	pDspBuf,vDspPtr		; Display Buffer pointer to time
 		clrf	vCurNum			; Assume time desired (borrow vCurNum)
 		tst	vSetPtr			; Setting State?
 		Jz	NoSet			; Nope! Regular clock operation
 		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Date is being set?
-		Jlt	TimeSd0			; Nope! Keep time on Side 0
-		goto	DateSd0			; Yepp! Put date to Side 0
-NoSet		Jset	vFlags2,bFROZEN,TimeSd0	; No set: Time on 0 if 1) clock Frozen
+		Jlt	TimFld0			; Nope! Keep time in Field 0
+		goto	DatFld0			; Yepp! Put date to Field 0
+NoSet		Jset	vFlags2,bFROZEN,TimFld0	; No set: Time on 0 if 1) clock Frozen
 		tst	vDspMod			; 2) display is not Alternating
-		Jnz	TimeSd0			; Keep time on Side 0
+		Jnz	TimFld0			; Keep time in Field 0
 		incf	vSec,W			; Increment: put 59->00 transit to front
 		andlw	0x02			; Find the appropriate bit
-		Jz	TimeSd0			; 3) desired 2-second interval is on
-DateSd0		comf	vCurNum,F		; Desired output is date
-TimeSd0		skipclr	vFlags2,bSDCNT		; Outputting Side 0?
+		Jz	TimFld0			; 3) desired 2-second interval is on
+DatFld0		comf	vCurNum,F		; Desired output is date
+TimFld0		skipclr	vFlags2,bFLDCNT		; Outputting Field 0?
 		comf	vCurNum,F		; Nope! Desired output is the opposite
 		tst	vCurNum			; Is the desired output time?
 		Jz	PtrDone			; Yepp! Pointer is at the right position
@@ -1006,27 +1002,27 @@ TestMus		call	IsScroll		; Display is Scrolling?
 		bsf	vFlags2,bQUIDLE		; Nope! Index Hole quits Idle (*)
 		Point	cPOSTSP			; "Soft" Post-String Pause
 		bcf	vFlags2,bQUIDLE		; Cancel Index Hole quitting Idle
-		Jclr	vFlags2,bSDCNT,OutSide0	; Is this Side 0?
+		Jclr	vFlags2,bFLDCNT,OutFld0	; Is this Field 0?
 		Point	cPRXCOR			; Nope! Uncond. Idx Hole Parallax Corr
-OutSide0	Jclr	vFlags2,bSAWIDX,OnePSP	; Index Hole was not seen - 1 PSP & done
-		Jset	vFlags2,bSDCNT,OutSide1	; Index Hole seen; is this Side 1?
+OutFld0		Jclr	vFlags2,bSAWIDX,OneGap	; Index Hole was not seen - 1 Gap & done
+		Jset	vFlags2,bFLDCNT,OutFld1	; Index Hole seen; is this Field 1?
 		Point	cPRXCOR			; Nope! Idx Hole Parallax Corr still due
-OutSide1	bcf	vFlags2,bSDCNT		; Upcoming side must be Side 0 [again]
+OutFld1		bcf	vFlags2,bFLDCNT		; Upcoming field must be #0 [again]
 		return
 ScrollDisp	Point	cPOSTSP			; Post-String Pause
-		Jclr	vFlags2,bSDCNT,OnePSP	; Side 0 - standard single PSP
-		Point	cREVCOR			; Side 1 - start w/ Revolution Corr
+		Jclr	vFlags2,bFLDCNT,OneGap	; Field 0 - standard single Gap
+		Point	cREVCOR			; Field 1 - start w/ Revolution Corr
 		Cmpfl	vDspMod,2		; Display Mode is Stand-Scroll?
-		Jz	OnePSP			; Yepp! 1 PSP
-		Jlt	ZeroPSP			; Left-Scroll: 0 PSP's
-		Point	cPSP			; Right-Scroll: 2 PSP's
-OnePSP		Point	cPSP			; Stand-Scroll: 1PSP
-ZeroPSP		movlw	cSDMSK			; Invert the Side Count bit
+		Jz	OneGap			; Yepp! 1 Gap
+		Jlt	ZeroGap			; Left-Scroll: 0 Gaps
+		Point	cSCRGAP			; Right-Scroll: 2 Gaps
+OneGap		Point	cSCRGAP			; Stand-Scroll: 1 Gap
+ZeroGap		movlw	cFLDMSK			; Invert the Field Count bit
 		xorwf	vFlags2,F
 		return
 
 ; (*) Because of the Index Hole parallax phenomenon, during Stationary display behavior
-; the Index Hole starts being seen even before the Back Side's Post-String Pause is
+; the Index Hole starts being seen even before the back field's Post-String Pause is
 ; over. The only time this is not the case is when switching from the Right-Scrolling to
 ; the Alternating display mode. However, instead of having a spinning loop to wait for
 ; the Index Hole to show up, we just let the display that is scrolling right (this time
@@ -1036,12 +1032,12 @@ ZeroPSP		movlw	cSDMSK			; Invert the Side Count bit
 
 ;------ Output Suppressed Digits Pause
 
-; Input:  vDspPtr = Beginning of current side in the Display Buffer
-; Output: FSR points to the position beyond current side
+; Input:  vDspPtr = Points to current field's string in the Display Buffer
+; Output: FSR points to beyond current field's string
 
 ; Note: It is assumed that Suppress If Zero & Decimal Point are mutually exclusive!
 
-OutputSup	Movff	vDspPtr,FSR		; Start of the side's Display Buffer
+OutputSup	Movff	vDspPtr,FSR		; Start of the field's Display Buffer
 		Movlf	6,vGenCtr		; Initialize the loop countdown
 SupLoop		movf	INDF,W			; Access the current digit
 		andlw	cXDMSK			; Cut the Flashing attribute
@@ -1049,7 +1045,7 @@ SupLoop		movf	INDF,W			; Access the current digit
 		Jnz	NoSup			; Digit is a suppressed zero?
 		Point	cHDIGP			; Yepp! Issue a Half Digit Pause
 NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
-		Djnz	vGenCtr,SupLoop		; Loop until side is over
+		Djnz	vGenCtr,SupLoop		; Loop until string is over
 		return
 
 
@@ -1083,9 +1079,9 @@ DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
 		return
  
 
-;------ Sound the music as part of OutputSide
+;------ Sound the music as part of OutputField
 
-SoundMusic	call	BuzzerOff		; Start by assuming that buzzer is off
+SoundMusic	call	BuzzerOff		; Start by assuming buzzer is to be off
 		Cmpfl	vMsType,cISTUNE		; Music is a tune?
 		Jge	PlayTune		; Yepp! Play it
 		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
@@ -1158,10 +1154,6 @@ PointLoop
 		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (Debug only)
 MagniLoop
 	endif
-
-		skipset	PORTB,bINDEXH
-		incf	vYear,F	
-
 		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
 		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
