@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.9.4
+; NTPClock Firmware v3.9.5
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -537,6 +537,8 @@ Point		macro	mcLit
 
 ; Note: Calculated GOTO table must not span a 256-word boundary, so these subroutines
 ; are better be kept here at the beginning of the code!
+;
+; DayLut is in interrupt context; all other lookups are in background context
 
 ;---- Days Per Month lookup table
 
@@ -730,7 +732,7 @@ ATestTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	ENDTUNE
 
 
-;==== Main code ========================================================================
+;==== Main code (Background context) ===================================================
 
 ; HW configuration errands
 
@@ -797,7 +799,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		bsf	INTCON,GIE		; Enable Global Interrupts  
 		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
-; The Main Loop
+;---- The Main Loop --------------------------------------------------------------------
 
 MainLoop	call	PrintTime		; Time Memory -> Display Buffer
 		call	OutputBuff		; Display Buffer -> Nixie
@@ -806,8 +808,6 @@ MainLoop	call	PrintTime		; Time Memory -> Display Buffer
 ; Note: In this very simple case, there is no need to hook up the detection of the Index
 ; Hole [i.e., the passing of the IR LED under the photodiode] to an interrupt.
 
-
-;==== Main code subroutines ============================================================
 
 ;---- Utilities ------------------------------------------------------------------------
 		
@@ -826,7 +826,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	9,vMin
-		Movlf	4,vSec
+		Movlf	5,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -846,9 +846,7 @@ NoScroll	bcf	STATUS,Z		; Yepp! Not Scrolling
 		return				; Nope! Scrolling
 
 
-;---- Display --------------------------------------------------------------------------
-
-;------ Infamy #1: Print the contents of the Clock Memory into the Display Buffer
+;---- Print the Clock Memory into the Display Buffer -----------------------------------
 
 PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 ; 1. Print the contents
@@ -887,7 +885,7 @@ NoDev		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
 DonePT		return
 
 
-;------ Print number into the Display Buffer
+;------ Print number
 
 ; Input:  vClkPtr = Current position in the Clock Memory to read from
 ;         vDspPtr = Current position in the Display Buffer to write into
@@ -922,7 +920,7 @@ DoneDiv		addwf	vCurNum,F		; Tens->vCurTen, Ones->vCurNum
 		return
 
 
-;------ Print digit into the Display Buffer
+;------ Print digit
 
 ; Input:  vCurTen = Digit to print
 ;         vDspPtr = Current position in the Display Buffer to write into
@@ -945,7 +943,7 @@ PrintDig	Movff	vDspPtr,FSR
 		return
 
 
-;------ Infamy #2: Output the Display Buffer's content to the Nixie
+;---- Output the Display Buffer to the Nixie -------------------------------------------
 
 OutputBuff	call	OutputField		; Output one field
 		call	OutputField		; Output the other field
@@ -954,8 +952,8 @@ OutputBuff	call	OutputField		; Output one field
 
 ;------ Output Field (& play the selected music)
 
-; Input:  vDspPtr = Points to current field's string in the Display Buffer
-; Output: vDspPtr points to beyond current field's string
+; Input:  vDspPtr points to current field's string in the Display Buffer
+; Output: vDspPtr points beyond current field's string
 ;
 ; Note: Also plays the selected tune [or Chirpie]
 
@@ -1032,8 +1030,8 @@ ZeroGap		movlw	cFLDMSK			; Invert the Field Count bit
 
 ;------ Output Suppressed Digits Pause
 
-; Input:  vDspPtr = Points to current field's string in the Display Buffer
-; Output: FSR points to beyond current field's string
+; Input:  vDspPtr points to current field's string in the Display Buffer
+; Output: FSR points beyond current field's string
 
 ; Note: It is assumed that Suppress If Zero & Decimal Point are mutually exclusive!
 
@@ -1195,7 +1193,7 @@ BuzzerOn	iorlw	1			; W != 0 means on
 		return
 
 
-;==== Interrupt Handler ================================================================
+;==== Interrupt Handler & subroutines (Interrupt context) ==============================
 
 IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		
@@ -1238,8 +1236,6 @@ InfLoop		Movff	vGenCtr,PORTA		; Throw the character on the display
 		goto	InfLoop			; Stay in the loop infinitely!
 
 		
-;==== Interrupt handler subroutines ====================================================
-
 ;---- Clock handling -------------------------------------------------------------------
 
 ;------ Advance the clock
@@ -1383,7 +1379,7 @@ CntDeprss	bcf	vFlags,bBUTST		; Save the current button state
 		return
 
 
-;------ Infamy #3: The button processing state machine
+;------ The button processing state machine
 
 ; Interprets the button indications generated by ReadButton.
 
@@ -1454,12 +1450,6 @@ SetLong		Retclr	vFlags,bLONGB		; Long Button event? Return if not
 		Retlt				; Nope! Done
 		clrf	vSetPtr			; Back to Running State
 		goto	AdjustDay		; Return through adjusting the day
-
-
-;==== Stop that little runaway at Runaway Bay ==========================================
-
-;		org	0x3FF
-;		goto	CritErr			; Execution got to this point -> OOPS!
 
 
 		end
