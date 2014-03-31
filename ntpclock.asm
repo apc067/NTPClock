@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.10.0
+; NTPClock Firmware v3.10.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -95,7 +95,7 @@ DDEBUG		equ	0			; Display Debug (stretch time by 64)
 
 ; Customization constants
 
-cVSCRL		equ	4			; Display scroll speed [rev/min]
+cVSCRL		equ	4			; Display scroll angular speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {1}			
@@ -162,8 +162,8 @@ cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPFLD-cSTRING)/2	; Pre-String Pause
-cREVCOR		equ	13			; Revolution Correction {3}
-cPOSTSP		equ	cPRESP-cSCRGAP		; Post-String Pause (for Left-Scroll)
+cFLDCOR		equ	0			; Field Correction {3}
+cPOSTSP		equ	cPRESP-cSCRGAP+cFLDCOR	; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
 cSHPSP1		equ	cPRESP-cPRXCOR-5	; Short Post-String Pause #1 {5}
@@ -184,36 +184,51 @@ cCATCHP		equ	6*cSCRGAP		; Stat display resync catchup pause (5}
 ; Pitch Divider Multiplier (PitchDivMul, a.k.a. cPDMUL) and the individual Pitch
 ; Dividers (PitchDiv) are determined throught the following equations:
 ;
-;    ICPerIter = 6 + 7 / IterPerPoint + ( 4 + 3 / PitchDiv ) / PitchDivMul    (1)
-;    IterPerPoint = IC_PER_SEC / ( POINT_PER_SEC * ICPerIter )                (2)
-;    f(PitchDiv) = IC_PER_SEC / ( 2 * PitchDivMul * PitchDiv * ICPerIter )    (3)
-;    f(256) >~ 390                                                            (4)
+;   ICPerIter = 6 + ( 7 + CCor ) / IterPerPoint + ( 4 + 3 / PitchDiv ) / PitchDivMul (1)
+;   IterPerPoint = IC_PER_SEC / ( POINT_PER_SEC * ICPerIter )                        (2)
+;   f(PitchDiv) = IC_PER_SEC / ( 2 * PitchDivMul * PitchDiv * ICPerIter )            (3)
+;   f(256) >~ 390                                                                    (4)
 ;
-; The constants in (1) represent instruction cycles of loop execution in PtDelay;
-; Intruction Cycles Per Second (IC_PER_SEC, a.k.a. cICPS) and Points Per Second
+; The literals in (1) represent instruction cycles of loop execution in PtDelay;
+; Instruction Cycles Per Second (IC_PER_SEC, a.k.a. cICPS) and Points Per Second
 ; (POINT_PER_SEC) are known values. Equation (4) states that the lowest frequency
 ; that can be played should be around 390 Hz or slightly higher (due to the buzzer's
-; properties).
+; sound qualities).
 ;
-; All values except ICPerIter are integers. IterPerPoint should be smaller than its
-; ideal value, so that Revolution Correction (see {3}) becomes positive as desired.
-; Technically speaking, IterPerPoint is also a function of PitchDiv. However, by
-; putting the PitchDivMul counting "at a lower order" than the PitchDiv counting, a
-; much higher execution time stability is achieved, and IterPerPoint remains the same
-; across the PitchDivider values of all reasonable frequencies.
+; All values except ICPerIter are integers. Technically speaking, IterPerPoint is also a
+; function of PitchDiv. However, by putting the PitchDivMul counting "at a lower order"
+; than the PitchDiv counting, a much higher execution time stability is achieved, and
+; the ideal value of IterPerPoint remains almost constant (a variation of about 0.15 
+; across the PitchDivider values of all reasonable frequencies).
 ;
-; {3} The Idle delay within a field's display cycle, which is a "shim" factor to
-; synchronize the angular speed of display generation to the angular speed of the
-; carousel as much as possible. It accounts for the truncation error of the cITRPPT
-; value, as well as for all the instruction cycles not spent in the Idle-code (which
-; works the opposite way than the previous factor). It is tuned by finding the value,
-; where the Stand-Scrolling display is the closest to stationary. Despite all these
-; efforts, achieving a quasi-stationary display this way is virtually impossible, and it
-; may also be affected by temperature and other factors. Therefore, for the stationary
-; display of the Alternating Mode, position syncronization is done using the "Index
-; Hole" IR LED/photodiode pair recycled from the original floppy drive. However,
-; fine-tuning the display synchronity will maximize the correctness of the specified
-; display scroll angular speed (cVSCRL) for the scrolling display modes.
+; In order to make the ideal value of IterPerPoint [for a chosen frequency] as close to
+; integer as possible, another trick is to add a few instruction cycles to the PtDelay
+; Point Loop's body (but outside the Core Loop itself) - this is represented by CCor in
+; equation (1). With this method, the resulting final Points Per Field value can be
+; adjusted with a resolution of about 2.5 points. (The same trick with the PitchDivMul
+; counter branch would give too big of a jump, whereas with PitchDiv, the execution time
+; stability with respect to the pitch dividers would be degraded.)
+;
+; One more trick to get the total Points Per Field value for a silent clock as close to
+; the mark as possible, and make the quasi-stationary Stand-Scrolling display as
+; motionless as possible (just for fun), is to pick the note that is being "played" by
+; the silent clock strategically. After experimentation, E6 was found to be the winner
+; for this note called the Silent Note. (Since the Silent music option is a special case
+; of Chirpie, E6 is represented as the note associated with the digit 7.)
+;
+; {3} This is the "shim" factor to synchronize the angular speed of display generation
+; to the angular speed of the carousel rotation as much as possible. It accounts for the
+; inaccuracy of the rounded IterPerPoint value, as well as for all the instruction
+; cycles not spent in the Idle-code. It is tuned by finding the value, where the 
+; Stand-Scrolling display is the closest to stationary. Despite all these efforts,
+; achieving a quasi-stationary display this way is virtually impossible, and it may
+; also be affected by temperature and other factors, as the carousel rotation speed is
+; adjusted by a circuitry independent of the NTPClock. Therefore, for the Stationary
+; display behavior, position syncronization is accomplished using the "Index Hole" 
+; IR LED/photodiode pair recycled from the original floppy drive. However, fine-tuning
+; the display synchronicity of the Stand-Scrolling display is not just a nutty pastime;
+; it'll maximize the correctness of the specified display scroll angular speed (cVSCRL)
+; for the scrolling display modes.
 ;
 ; {4} Correction factor compensating for the fact that while the "Index Hole" IR LED is
 ; positioned such that it perfectly lines up with the photodiode when the longer edge of
@@ -304,6 +319,7 @@ cISSMOO		equ	3			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
 cBPM		equ	cVSPIN*cFLPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
+cSILDIG		equ	7			; Digit for Silent Note (see {2} above)
 
 ; Tune definition formalism
 
@@ -625,37 +641,37 @@ DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Pitch divider
 
 NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	249			; A4
-		retlw	235			; A#4
-		retlw	222			; B4
-		retlw	210			; C5
-		retlw	198			; C#5
-		retlw	187			; D5
-		retlw	176			; D#5
-		retlw	166			; E5
-		retlw	157			; F5
-		retlw	148			; F#5
-		retlw	140			; G5
-		retlw	132			; G#5
-		retlw	125			; A5
-		retlw	118			; A#5
-		retlw	111			; B5
-		retlw	105			; C6
-		retlw	99			; C#6
-		retlw	93			; D6
-		retlw	88			; D#6
-		retlw	83			; E6
-		retlw	78			; F6
-		retlw	74			; F#6
-		retlw	70			; G6
-		retlw	66			; G#6
-		retlw	62			; A6
-		retlw	59			; A#6
+		retlw	246			; A4
+		retlw	232			; A#4
+		retlw	219			; B4
+		retlw	207			; C5
+		retlw	195			; C#5
+		retlw	184			; D5
+		retlw	174			; D#5
+		retlw	164			; E5
+		retlw	155			; F5
+		retlw	146			; F#5
+		retlw	138			; G5
+		retlw	130			; G#5
+		retlw	123			; A5
+		retlw	116			; A#5
+		retlw	110			; B5
+		retlw	103			; C6
+		retlw	98			; C#6
+		retlw	92			; D6
+		retlw	87			; D#6
+		retlw	82			; E6
+		retlw	77			; F6
+		retlw	73			; F#6
+		retlw	69			; G6
+		retlw	65			; G#6
+		retlw	61			; A6
+		retlw	58			; A#6
 		retlw	55			; B6
 		retlw	52			; C7
 		retlw	49			; C#7
-		retlw	47			; D7
-		retlw	44			; D#7
+		retlw	46			; D7
+		retlw	43			; D#7
 		retlw	0			; Pause (not used as a divide-by-256)
 
 ;---- Note Duration ID to duration count lookup table
@@ -855,7 +871,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	10,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1019,8 +1035,7 @@ PtrDone		Point	cPRESP			; Pre-String Pause
 		tst	vNoteDr			; Currently played note is over?
 		skipnz				; Nope! Don't turn buzzer off yet
 		call	BuzzerOff		; Turn buzzer off
-PostStr		Point	cREVCOR			; Start with Revolution Correction
-		call	IsScroll		; Display is Scrolling?
+PostStr		call	IsScroll		; Display is Scrolling?
 		Jz	ScrollDisp		; Yepp! Handle that case separately
 		Point	cSHPSP1			; Short Post-String Pause #1
 		bsf	vFlags2,bQUIDLE		; Index Hole quits Idle (4)
@@ -1104,7 +1119,7 @@ SoundMusic	call	BuzzerOff		; Start by assuming buzzer is to be off
 		andlw	cDIGMSK			; Cut all the attributes
 		tst	vMsType			; Music type is 0 (Silence)?
 		skipnz				; Nupp! Sound the actual digit
-		movlw	5			; Yepp! "Sound" a medium pitch silently
+		movlw	cSILDIG			; Yepp! "Sound" the Silent Note {2}
 		call	DigPitchIDLut		; Look up the digit's Pitch ID
 		call	NotePitchLut		; Look up the Pitch ID's pitch divider
 		movwf	vBzWid			; Apply it to the current sound
@@ -1169,6 +1184,11 @@ PointLoop
 		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (Debug only)
 MagniLoop
 	endif
+		nop				; Additional calc'd per-point delay {2}
+		nop
+		nop
+		nop
+		nop
 		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
 		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
