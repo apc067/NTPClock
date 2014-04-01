@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.10.1
+; NTPClock Firmware v3.10.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -58,10 +58,11 @@
 ;
 ; 3. Operating State
 ;    - Running: vSetPrt = 0
-;    - Setting: vSetPtr = Non0
+;    - Setting: vSetPtr = Non-0
 ;
 ; 4. Different conditions
-;    - Frozen Clock: vFlags2:bFROZEN = 1 (Waiting for button push to start clock)
+;    - Frozen Clock: vFlags2:bFROZEN = 1 (Clock is not advanced when a second elapsed)
+;    - Dizzy Clock:  Frozen && !Setting  (Waiting for button push to start clock)
 ;    - Device Info:  vFlags2:bDEVINF = 1 (Displaying device info instead of time)
 ;
 ; 5. Display behavior
@@ -417,7 +418,7 @@ vFlags2		equ	0x0F			; System flags #2
 ;
 ; vSetPtr: Determines the Operating State ("State" for short)
 ;
-;   0 - Running State, Non0 - Setting State [address of clock variable being set]
+;   0 - Running State, Non-0 - Setting State [address of clock variable being set]
 ;
 ; vFlags:
 ;
@@ -840,7 +841,7 @@ QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		Movlf	1,vDspMod		; Display Mode = Left-Scroll
 		clrf	vFshCtr			; Reset the Flashing Character Counter
-		bsf	vFlags2,bFROZEN		; Freeze the clock [it became "Dizzy"]
+		bsf	vFlags2,bFROZEN		; Freeze the clock [it became Dizzy]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
 		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
 
@@ -871,7 +872,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	10,vMin
-		Movlf	1,vSec
+		Movlf	2,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -887,7 +888,7 @@ IsScroll	tst	vDspMod			; Display Mode = Alternating?
 		tst	vSetPtr			; Operation State = Setting?
 		Retnz				; Yepp! Not Scrolling
 		skipclr	vFlags2,bFROZEN		; Clock is in Frozen Condition?
-NoScroll	bcf	STATUS,Z		; Yepp! Not Scrolling
+NoScroll	bcf	STATUS,Z		; Yepp! It's Dizzy -> Not Scrolling
 		return				; Nope! Scrolling
 
 
@@ -1005,7 +1006,7 @@ OutputField	call	SoundMusic		; Sound that music for the field
 		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Date is being set?
 		Jlt	TimFld0			; Nope! Keep time in Field 0
 		goto	DatFld0			; Yepp! Put date to Field 0
-NoSet		Jset	vFlags2,bFROZEN,TimFld0	; No set: Time on 0 if 1) clock Frozen
+NoSet		Jset	vFlags2,bFROZEN,TimFld0	; No set: Time on 0 if 1) clock Dizzy
 		tst	vDspMod			; 2) display is not Alternating
 		Jnz	TimFld0			; Keep time in Field 0
 		incf	vSec,W			; Increment: put 59->00 transit to front
@@ -1242,6 +1243,8 @@ IntHdl		Jclr	INTCON,T0IF,CritErr	; Not a Timer0 IT -> OOPS!
 		movwf	vStsTmp
 		Movff	FSR,vFsrTmp		; Save FSR (not needed; just in case)
 
+		bcf	vFlags,bSHORTB		; Clear Short Button Event
+		bcf	vFlags,bLONGB		; Clear Long Button Event
 		call	AdvClock		; Advance the clock
 		call	ReadButton		; Read button status & generate events
 		call	ProcButton		; Process the button events
@@ -1379,10 +1382,7 @@ DayRoll		movlw	0x03			; Mask 0000 0011
 ;  - Cancel Short Button Event (vFlags:bCANSHT): Set upon the generation of a Long
 ;    button event or clock unfreeze; consumed upon the next button release
 
-ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
-		bcf	vFlags,bLONGB
-
-		Jset	PORTB,bBUTTON,NoPress	; If button not pressed, proceed as such
+ReadButton	Jset	PORTB,bBUTTON,NoPress	; If button not pressed, proceed as such
 
 ; 1. Button pressed
 		Jset	vFlags,bBUTST,CtPress	; If not start of a press, keep counting
@@ -1392,7 +1392,7 @@ ReadButton	bcf	vFlags,bSHORTB		; Clear the button events
 		clrf	vButTck			; Reset the Button Tick Counter
 		tst	vSetPtr			; In Setting State right now?
 		Jnz	CtPress			; Yepp! No action upon start of press
-		Jclr	vFlags2,bFROZEN,CtPress	; If clock is not Frozen, -"-
+		Jclr	vFlags2,bFROZEN,CtPress	; If clock is not Dizzy, -"-
 		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec Counter
 		bcf	vFlags2,bFROZEN		; Unfreeze the clock
 		bsf	vFlags,bCANSHT		; Cancel Short Button Event
