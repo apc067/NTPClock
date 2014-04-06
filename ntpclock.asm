@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.12.1
+; NTPClock Firmware v3.12.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -47,7 +47,7 @@
 ;***************************************************************************************
 
 ; 1. Display Modes
-;    - Alternating:   vDspMod = 0 - Stationary display w/ alternating date/time fields
+;    - Alternating:   vDspMod = 0 - Stationary display w/ alternating date/time exposure
 ;    - Magnetic Spin: vDspMod = 1 - Rapid right scroll w/ slow-down for time & date
 ;    - Left-Scroll:   vDspMod = 2 - Continuous left scroll
 ;    - Stand-Scroll:  vDspMod = 3 - Quasi-stationary (for fun / to tune display timing)
@@ -123,9 +123,9 @@ cMAGCNT		equ	64			; Stretch time to 0.5 sec/digit
 cFCLK		equ	19660800		; Clock freq (cycles per second) [cc/s]
 cVSPIN		equ	360			; Carousel rotation speed [rev/min]
 cCCPIC		equ	4			; Clock cycles per instr cycle [cc/ic]
-cPTPREV		equ	2000			; Points per revolution [point/rev]
-cFLPREV		equ	2			; Fields per revolution [fld/rev]
-cPTPFLD		equ	cPTPREV/cFLPREV		; Points per field [point/fld]
+cPTPARC		equ	1000			; Points per arc [point/arc]
+cARCPRV		equ	2			; Arcs per revolution [arc/rev]
+cPTPRV		equ	cPTPARC*cARCPRV		; Points per revolution [point/rev]
 
 
 ; Geometrical constants
@@ -147,7 +147,7 @@ cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 
 cITRPPT		equ	54			; Loop iters per point [iter/point] {2}
 
-cSCRGAP		equ	cPTPFLD*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
+cSCRGAP		equ	cPTPARC*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
 						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
 cTMRDIV		equ	cTMRPSC*cTMRCNT		; Total timer divider
@@ -169,9 +169,9 @@ cHDIGP		equ	cDIGIT/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
-cPRESP		equ	(cPTPFLD-cSTRING)/2	; Pre-String Pause
-cFLDCOR		equ	0			; Field Correction {3}
-cPOSTSP		equ	cPRESP-cSCRGAP+cFLDCOR	; Post-String Pause (for Left-Scroll)
+cPRESP		equ	(cPTPARC-cSTRING)/2	; Pre-String Pause
+cARCCOR		equ	0			; Arc Correction {3}
+cPOSTSP		equ	cPRESP-cSCRGAP+cARCCOR	; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
 cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
 cSHPSP1		equ	cPRESP-cPRXCOR-5	; Short Post-String Pause #1 {5}
@@ -186,9 +186,9 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
 
 ; Notes:
 ;
-; {1} Note duration multiplier: Determines how many fields [the atomic duration of
-; note generation] make up a 1/16 note [the shortest note that can be played], and
-; thus the Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
+; {1} Note duration multiplier: Determines how many arcs [the atomic duration of note
+; generation] make up a 1/16 note [the shortest note that can be played], and thus the
+; Beats Per Minute value of the played music (90 @ cDRMUL=2, 180 @ cDRMUL=1)
 ;
 ; {2} The PtDelay Inner Loop Iterations Per Point (IterPerPoint, a.k.a. cITRPPT), the
 ; Pitch Divider Multiplier (PitchDivMul, a.k.a. cPDMUL) and the individual Pitch
@@ -214,12 +214,12 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
 ; In order to make the ideal value of IterPerPoint [for a chosen frequency] as close to
 ; integer as possible, another trick is to add a few instruction cycles to the PtDelay
 ; Point Loop's body (but outside the Core Loop itself) - this is represented by CCor in
-; equation (1). With this method, the resulting final Points Per Field value can be
+; equation (1). With this method, the resulting final Points Per Arc value can be
 ; adjusted with a resolution of about 2.5 points. (The same trick with the PitchDivMul
 ; counter branch would give too big of a jump, whereas with PitchDiv, the execution time
 ; stability with respect to the pitch dividers would be degraded.)
 ;
-; One more trick to get the total Points Per Field value for a silent clock as close to
+; One more trick to get the total Points Per Arc value for a silent clock as close to
 ; the mark as possible, and make the quasi-stationary Stand-Scrolling display as
 ; motionless as possible (just for fun), is to pick the note that is being "played" by
 ; the silent clock strategically. After experimentation, E6 was found to be the winner
@@ -245,7 +245,7 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
 ; the rotating circuit board is parallel to the front of the floppy drive [the starting
 ; position of display generation], the photodiode begins to "see" the IR LED even before
 ; perfect alignment. It is tuned by finding the value, where the middle of the display
-; fields in Stationary behavior line up with the depth-wise middle of the floppy drive.
+; arcs in Stationary behavior line up with the depth-wise middle of the floppy drive.
 ;
 ; {5} These parameters control the behavior, whereby switching to Stationary display
 ; behavior the display will begins to right-scroll quickly until the correct alignment
@@ -261,14 +261,14 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
 ;  - cCATCHP: The length of the pause that is inserted to create the right-scroll, when
 ;    the Index Hole was not seen when it was supposed to be. This length determines the
 ;    speed of this "catch-up" right-scroll (but since it is only inserted during the
-;    displaying of Field 1, its effect on the speed is half of that of cSCRGAP).
+;    displaying of Arc 1, its effect on the speed is half of that of cSCRGAP).
 ;  - cSHPSP1: Determines when to start expecting the Index Hole by the Rubber Pause. If
 ;    it is so early that the Rubber Pause already ended even before the Index Hole was
 ;    seen, the display will become jittery. Conversely, if it is so late that the the
 ;    start of the Index Hole's visibility was missed, the display will right-scroll
 ;    slowly (with a speed determined by the amount of lateness), until the Rubber Pause
 ;    completely misses the Index Hole's visibility, at which point the catchup right-
-;    scroll will take over, and repeat the same for the opposite display field.
+;    scroll will take over, and repeat the same for the opposite display arc.
 ; 
 ; {6} The Pre-String Pause is the longest delay during display generation. If its value
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
@@ -301,13 +301,13 @@ bCANSHT		equ	4			; Cancel Short Button Event flag's bit#
 
 ; vFlags2 bit constants
 
-bFLDCNT		equ	0			; Field Count flag's bit#
-cFLDMSK		equ	1<<bFLDCNT		; Field Count flag's bit mask
+bARCCNT		equ	0			; Arc Count flag's bit#
+cARCMSK		equ	1<<bARCCNT		; Arc Count flag's bit mask
 bFROZEN		equ	1			; Frozen Clock Condition flag's bit#
 bDEVINF		equ	2			; Device Info Condition flag's bit#
 bQUIDLE		equ	3			; Idx Hole Should Quit Idle flag's bit#
 bSAWIDX		equ	4			; Saw Idx Hole During Quidle flag's bit#
-bIDXPF		equ	5			; Index Hole in Previous Field flag's bit#
+bIDXPA		equ	5			; Index Hole in Previous Arc flag's bit#
 
 ; I/O port bit constants
 
@@ -329,7 +329,7 @@ cISTUNE		equ	2			; Music ID of the first tune
 cISSMOO		equ	4			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
-cBPM		equ	cVSPIN*cFLPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
+cBPM		equ	cVSPIN*cARCPRV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
 cSILDIG		equ	7			; Digit for Silent Note (see {2} above)
 
 ; Tune definition formalism
@@ -444,14 +444,14 @@ vFlags2		equ	0x0F			; System flags #2
 ; vFlags2:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         - - P I Q N R F
+;         - - P I Q N R A
 ;
-;         F (0): Field Count flag [1-bit counter: 0-front, 1-back]
+;         A (0): Arc Count flag [1-bit counter; in Alternating Mode, 0=front, 1=back]
 ;         R (1): Frozen Clock Condition flag
 ;         N (2): Device Info Condition flag
 ;         Q (3): Index Hole Should Quit Idle ("Quidle") flag
 ;         I (4): Saw Index Hole During Quidle flag
-;         P (5): Index Hole in Previous Field flag
+;         P (5): Index Hole in Previous Arc flag
 
 ; Clock Memory (In display order)
 ;
@@ -483,7 +483,7 @@ vFshCtr		equ	0x1E			; Flashing Char Counter
 
 ; Notes:
 ;
-; vFshCtr is a [usually] free-running counter incremented in every field display cycle,
+; vFshCtr is a [usually] free-running counter incremented in every arc display cycle,
 ; whose bit selected by bFSHBIT is the base to turn a flashing character on & off.
 ; Bit=0: Character on, Bit=1: Character off
 ;
@@ -689,7 +689,7 @@ NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ;---- Note Duration ID to duration count lookup table
 
 ; Input:  W = Duration ID
-; Output: W = Duration count [fld]
+; Output: W = Duration count [arc]
 
 NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	1*cDRMUL		; 1/16
@@ -888,7 +888,7 @@ DevInfLoop	Jset	vFlags,bSHORTB,OrigRls	; Original button already released?
 		goto	DoneOrig		; End of "original button still pressed"
 OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
 DoneOrig	call	PrintTime		; Device info -> Display Buffer
-		call	OutputField		; Display Buffer -> Nixie
+		call	OutputArc		; Display Buffer -> Nixie
 		goto	DevInfLoop		; Device Info Loop iteration done
 QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
@@ -906,7 +906,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 ;---- The Main Loop --------------------------------------------------------------------
 
 MainLoop	call	PrintTime		; Time Memory -> Display Buffer
-		call	OutputField		; Display Buffer -> Nixie
+		call	OutputArc		; Display Buffer -> Nixie
 		goto	MainLoop		; Main Loop iteration done
 
 ; Note: In this very simple case, there is no need to hook up the detection of the Index
@@ -930,7 +930,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	12,vMin
-		Movlf	1,vSec
+		Movlf	2,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1049,29 +1049,29 @@ PrintDig	Movff	vDspPtr,FSR
 
 ;---- Output the Display Buffer to the Nixie -------------------------------------------
 
-;------ Output Field (& play the selected music)
+;------ Output Arc (& play the selected music)
 
-; Input:  vDspPtr points to current field's string in the Display Buffer
-; Output: vDspPtr points beyond current field's string
+; Input:  vDspPtr points to current arc's string in the Display Buffer
+; Output: vDspPtr points beyond current arc's string
 ;
 ; Note: Also plays the selected tune [or Chirpie]
 
-OutputField	call	SoundMusic		; Sound that music for the field		
+OutputArc	call	SoundMusic		; Sound that music for the arc		
 		Movlf	pDspBuf,vDspPtr		; Display Buffer pointer to time
 		clrf	vCurNum			; Assume time desired (borrow vCurNum)
 		tst	vSetPtr			; Setting State?
 		Jz	NoSet			; Nope! Regular clock operation
 		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Date is being set?
-		Jlt	TimFld0			; Nope! Keep time in Field 0
-		goto	DatFld0			; Yepp! Put date to Field 0
-NoSet		Jset	vFlags2,bFROZEN,TimFld0	; No set: Time on 0 if 1) clock Dizzy
+		Jlt	TimArc0			; Nope! Keep time in Arc 0
+		goto	DatArc0			; Yepp! Put date to Arc 0
+NoSet		Jset	vFlags2,bFROZEN,TimArc0	; No set: Time on 0 if 1) clock Dizzy
 		tst	vDspMod			; 2) display is not Alternating
-		Jnz	TimFld0			; Keep time in Field 0
+		Jnz	TimArc0			; Keep time in Arc 0
 		incf	vSec,W			; Increment: put 59->00 transit to front
 		andlw	0x02			; Find the appropriate bit
-		Jz	TimFld0			; 3) desired 2-second interval is on
-DatFld0		comf	vCurNum,F		; Desired output is date
-TimFld0		skipclr	vFlags2,bFLDCNT		; Outputting Field 0?
+		Jz	TimArc0			; 3) desired 2-second interval is on
+DatArc0		comf	vCurNum,F		; Desired output is date
+TimArc0		skipclr	vFlags2,bARCCNT		; Outputting Arc 0?
 		comf	vCurNum,F		; Nope! Desired output is the opposite
 		tst	vCurNum			; Is the desired output time?
 		Jz	PtrDone			; Yepp! Pointer is at the right position
@@ -1101,24 +1101,24 @@ PostStr		call	IsScroll		; Display is Scrolling?
 		Point	cRBIDXP			; Rubber Index Hole Expectation Pause
 		bcf	vFlags2,bQUIDLE		; Cancel Index Hole quitting Idle
 		Jset	vFlags2,bSAWIDX,SawIdx	; Index Hole was seen?
-		Point	cSHPSP2			; Nope! Expect normal spin if Field 0
-		Jclr	vFlags2,bFLDCNT,ZeroGap	; Field 0 indeed - no more pause
+		Point	cSHPSP2			; Nope! Expect normal spin if Arc 0
+		Jclr	vFlags2,bARCCNT,ZeroGap	; Arc 0 indeed - no more pause
 		Point	cCATCHP			; Stationary display resync catchup
 		goto	ZeroGap			; Done with pauses for this scenario
 SawIdx		Point	cPRXCOR			; Yepp! Idx Hole Parallax Corr needed
-		bcf	vFlags2,bFLDCNT		; Upcoming field must be #0 [again]
+		bcf	vFlags2,bARCCNT		; Upcoming arc must be Arc 0 [again]
 		return
 ScrollDisp	Point	cPOSTSP			; Post-String Pause
 		Cmpfl	vDspMod,1		; Display Mode is Magnetic Spin?
 		Jnz	TradScroll		; Nupp! Handle the "traditional" scrolls
-		Point	cMAGP			; Complete the Field with a little extra
+		Point	cMAGP			; Complete the arc with a little extra
 		clrf	vCurNum			; Assume Mag Spin Gap (borrow vCurNum)
-		skipclr	vFlags2,bIDXPF		; Idx Hole in previous field?
+		skipclr	vFlags2,bIDXPA		; Idx Hole in previous arc?
 		incf	vCurNum,F		; Yepp! Mark Mag Spin Gap not needed
-		bcf	vFlags2,bIDXPF		; Assume Idx Hole won't be seen
+		bcf	vFlags2,bIDXPA		; Assume Idx Hole won't be seen
 		Jset	PORTB,bINDEXH,NoIdx	; Index Hole is being seen?
 		incf	vCurNum,F		; Yepp! Mark Mag Spin Gap not needed
-		bsf	vFlags2,bIDXPF		; Mark Idx Hole was seen this time
+		bsf	vFlags2,bIDXPA		; Mark Idx Hole was seen this time
 NoIdx		tst	vCurNum			; Magnetic Spin Gap needed?
 		Jnz	ZeroGap			; Nope! Done with pauses
 		Point	cMAGGAP			; Magnetic Spin Gap
@@ -1128,19 +1128,19 @@ TradScroll	Cmpfl	vDspMod,3		; Display Mode is Stand-Scroll?
 		Jlt	ZeroGap			; Left-Scroll: 0 Gaps
 		Point	cSCRGAP			; Right-Scroll: 2 Gaps
 OneGap		Point	cSCRGAP			; Stand-Scroll: 1 Gap
-ZeroGap		movlw	cFLDMSK			; Invert the Field Count bit
+ZeroGap		movlw	cARCMSK			; Invert the Arc Count bit
 		xorwf	vFlags2,F
 		return
 
 
 ;------ Output Suppressed Digits Pause
 
-; Input:  vDspPtr points to current field's string in the Display Buffer
-; Output: FSR points beyond current field's string
+; Input:  vDspPtr points to current arc's string in the Display Buffer
+; Output: FSR points beyond current arc's string
 
 ; Note: It is assumed that Suppress If Zero & Decimal Point are mutually exclusive!
 
-OutputSup	Movff	vDspPtr,FSR		; Start of the field's Display Buffer
+OutputSup	Movff	vDspPtr,FSR		; Start of the arc's Display Buffer
 		Movlf	6,vGenCtr		; Initialize the loop countdown
 SupLoop		movf	INDF,W			; Access the current digit
 		andlw	cXDMSK			; Cut the Flashing attribute
@@ -1182,7 +1182,7 @@ DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
 		return
  
 
-;------ Sound the music as part of OutputField
+;------ Sound the music as part of OutputArc
 
 SoundMusic	call	BuzzerOff		; Start by assuming buzzer is to be off
 		Cmpfl	vMsType,cISTUNE		; Music is a tune?
