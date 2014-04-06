@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.11.0
+; NTPClock Firmware v3.12.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -106,7 +106,7 @@ cPDMUL		equ	3			; Buzzer pitch divider multiplier {2}
 ; Sentinel constants
 
 cNUMMOD		equ	5			; Number of different display modes
-cNUMMUS		equ	5			; Number of different music options
+cNUMMUS		equ	6			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
@@ -320,7 +320,7 @@ cDRWID		equ	3			; # of Dur ID bits in ND (Also see {$}!)
 cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
 cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
 cISTUNE		equ	2			; Music ID of the first tune
-cISSMOO		equ	3			; Music ID of the first smooth tune
+cISSMOO		equ	4			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
 cBPM		equ	cVSPIN*cFLPREV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
@@ -756,6 +756,53 @@ ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	N(B5,V1_2)
 		retlw	ENDTUNE
 
+;---- Jet Set Willy tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+JetSetLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(A5,V1_4)
+		retlw	N(F5,V1_2)
+
+		retlw	N(A5,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(A5,V1_4)
+		retlw	N(C6,V1_8)
+		retlw	N(D6,V1_8)
+		retlw	N(Ds6,V1_8)
+		retlw	N(D6,V1_8)
+		retlw	N(Ds6,V1_8)
+		retlw	N(D6,V1_8)
+		retlw	N(C6,V1)
+		
+		retlw	N(F6,V1_2)
+		retlw	N(E6,V1_4)
+		retlw	N(D6,V1_4)
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(A5,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(A5,V1_4)
+
+		retlw	N(Cs6,V1_8)
+		retlw	N(C6,V1_8)
+		retlw	N(As5,V1_8)
+		retlw	N(C6,V1_8)
+		retlw	N(Cs6,V1_4)
+		retlw	N(As5,V1_4)
+		retlw	N(F6,V1)
+		retlw	ENDTUNE		
+		
 ;---- A-Note Test "tune" lookup table
 
 ; Input:  W = Tune Pointer [tune note index]
@@ -876,7 +923,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	11,vMin
+		Movlf	12,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -1155,7 +1202,12 @@ RefetchNote	Cmpfl	vMsType,3		; Music option #2?
 		movf	vTnPtr,W		; Get the Tune Pointer
 		call	ManicTuneLut		; Play next note in the tune
 		goto	ProcessNote		; Process the note
-Music3		; *** Next music option here!
+Music3		Cmpfl	vMsType,4		; Music option #3?
+		Jge	Music4			; Nupp! Try the next option
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	JetSetLut		; Play next note in the tune
+		goto	ProcessNote		; Process the note
+Music4		; *** Next music option here!
 ATest		Cmpfl	vMsType,cPCHTST		; Music option A-Note Test?
 		Jge	PchTest			; Nupp! Try the next option
 		movf	vTnPtr,W		; Get the Tune Pointer
