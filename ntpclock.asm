@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.12.0
+; NTPClock Firmware v3.12.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -46,32 +46,38 @@
 ; Summary of Behaviors
 ;***************************************************************************************
 
-; 1. Hour Notation
-;    - 12-hour: "12/24h" Jumper off
-;    - 24-hour: "12/24h" Jumper on
+; 1. Display Modes
+;    - Alternating:   vDspMod = 0 - Stationary display w/ alternating date/time fields
+;    - Magnetic Spin: vDspMod = 1 - Rapid right scroll w/ slow-down for time & date
+;    - Left-Scroll:   vDspMod = 2 - Continuous left scroll
+;    - Stand-Scroll:  vDspMod = 3 - Quasi-stationary (for fun / to tune display timing)
+;    - Right-Scroll:  vDspMod = 4 - Continuous right scroll
 ;
-; 2. Display Mode
-;    - Alternating:   vDspMod = 0 (Stationary display w/ alternating date/time fields)
-;    - Magnetic Spin: vDspMod = 1 (Rapid right scroll w/ slow-down for time & date)
-;    - Left-Scroll:   vDspMod = 2
-;    - Stand-Scroll:  vDspMod = 3 (Quasi-stationary - for fun / to tune display timing)
-;    - Right-Scroll:  vDspMod = 4
+; 2. Operating Modes
+;    - Normal:      vFlags2:bDEVINF = 0 - Displaying time & date
+;    - Device Info: vFlags2:bDEVINF = 1 - Displaying FW version & req'd HW version instead
 ;
-; 3. Operating State
-;    - Running: vSetPrt = 0
-;    - Setting: vSetPtr = Non-0
+; 3. Operating States (in Normal Operating Mode)
+;    - Running: vSetPtr = 0     - Regular clock operation
+;    - Setting: vSetPtr = Non-0 - Setting the different time & date fields
 ;
-; 4. Different conditions
-;    - Frozen Clock: vFlags2:bFROZEN = 1 (Clock is not advanced when a second elapsed)
-;    - Dizzy Clock:  Frozen && !Setting  (Waiting for button push to start clock)
-;    - Device Info:  vFlags2:bDEVINF = 1 (Displaying device info instead of time)
+; 4. Operating Conditions
+;    - Frozen Clock: vFlags2:bFROZEN = 1 - Clock not advanced when a second elapsed
+;       -> After boot, or when the seconds were adjusted in Setting State
+;    - Dizzy Clock:  Frozen && !Setting  - Waiting for button push to start clock
+;       -> After boot, or after coming out of Setting State when clock got Frozen; the
+;          button push marks the moment when the next full second should begin
 ;
-; 5. Display behavior
+; 5. Display Behaviors
 ;    - Stationary: Display position is stabilized using the Index Hole
 ;       - Display Mode = Alternating  -OR-
 ;       - Operating State = Setting   -OR-
-;       - Frozen Clock Condition
+;       - Operating Condition = Frozen [incl. Dizzy] 
 ;    - Scrolling: Not Stationary
+;
+; 6. Hour Notations
+;    - 12-hour: "12/24h" Jumper off - Hrs = 1..12; decimal pts on for AM, flash for PM
+;    - 24-hour: "12/24h" Jumper on  - Hrs = 0..23; decimal pts always on
 
 
 ;***************************************************************************************
@@ -924,7 +930,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	12,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
