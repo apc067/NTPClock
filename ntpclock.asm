@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.12.2
+; NTPClock Firmware v3.12.3
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -890,9 +890,9 @@ OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
 DoneOrig	call	PrintTime		; Device info -> Display Buffer
 		call	OutputArc		; Display Buffer -> Nixie
 		goto	DevInfLoop		; Device Info Loop iteration done
-QuitLoop	Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
+QuitLoop	Point	100			; Short delay to kill any button bounce
+		Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
-		Point	10			; Short delay to kill any button bounce
 
 ; Normal boot
 
@@ -930,7 +930,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	12,vMin
-		Movlf	2,vSec
+		Movlf	3,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
