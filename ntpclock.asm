@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.12.3
+; NTPClock Firmware v3.13.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -112,7 +112,7 @@ cPDMUL		equ	3			; Buzzer pitch divider multiplier {2}
 ; Sentinel constants
 
 cNUMMOD		equ	5			; Number of different display modes
-cNUMMUS		equ	6			; Number of different music options
+cNUMMUS		equ	7			; Number of different music options
 
 ; Time Magnifier (for DEBUG reasons)
 
@@ -532,7 +532,7 @@ vGenCtr		equ	0x36			; Generic loop counter
 
 ; Music-related variables
 
-vMsType		equ	0x37			; Music Type (0=Silence, 1=Time-chirp)
+vMsType		equ	0x37			; Music Type
 vCrpPtr		equ	0x38			; Chirp Pointer (Along Display Buffer)
 vTnPtr		equ	0x39			; Tune Pointer (Along current tune LUT)
 vNoteDr		equ	0x40			; Current note's [remaining] duration
@@ -547,7 +547,8 @@ vPDMCtr		equ	0x43			; Buzzer Pitch Div Multiplier Counter
 ;   2 - Manic Miner game jingle
 ;   3 - Jet Set Willie game jingle
 ;   4 - Woodycock (Anonymous)
-;   5 - Shimmy (from Imre Kálmán: Die Bajadere)
+;   5 - A-Test (Play notes A4, A5 & A6 for a duration of 6 [cca. 8 sec] each)
+;   6 - Pitch Test (Play pitch dividers 256...1 for 1 arc each [cca. 21 sec total])
 
 
 ;***************************************************************************************
@@ -587,6 +588,7 @@ Point		macro	mcLit
 
 ;---- Interrupt jump address (4) -------------------------------------------------------
 
+		org	4
 		goto	IntHdl			; Jump to the handler
 
 
@@ -707,6 +709,7 @@ NoteDuratnLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+
 		retlw	N(E5,V1_8)
 		retlw	N(Fs5,V1_8)
 		retlw	N(Gs5,V1_8)
@@ -760,6 +763,7 @@ ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	N(E5,V1_8)
 		retlw	N(Gs5,V1_8)
 		retlw	N(B5,V1_2)
+
 		retlw	ENDTUNE
 
 ;---- Jet Set Willy tune lookup table
@@ -768,6 +772,7 @@ ManicTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Note Descriptor of corresponding note
 
 JetSetLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+
 		retlw	N(C6,V1_8)
 		retlw	N(As5,V1_8)
 		retlw	N(C6,V1_8)
@@ -807,8 +812,102 @@ JetSetLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 		retlw	N(Cs6,V1_4)
 		retlw	N(As5,V1_4)
 		retlw	N(F6,V1)
+
 		retlw	ENDTUNE		
 		
+;---- Woodycock tune lookup table
+
+; Input:  W = Tune Pointer [tune note index]
+; Output: W = Note Descriptor of corresponding note
+
+WoodycockLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
+
+		retlw	N(G6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(Bb6,V3_8)
+		retlw	N(A6,V1_8)
+		retlw	N(G6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(G6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(Bb6,V3_8)
+		retlw	N(A6,V1_8)
+		retlw	N(G6,V1_4)
+		retlw	N(Fs6,V1_4)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V1_2)
+		retlw	N(Pse,V1_4)
+		
+		retlw	N(G6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(Bb6,V3_8)
+		retlw	N(A6,V1_8)
+		retlw	N(G6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(G6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(Bb6,V3_8)
+		retlw	N(A6,V1_8)
+		retlw	N(G6,V1_4)
+		retlw	N(Fs6,V1_4)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V1_2)
+		retlw	N(G6,V1_4)
+		
+		retlw	N(F6,V1_2)
+		retlw	N(E6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(C6,V1_2)
+		retlw	N(C6,V1_4)
+		retlw	N(E6,V3_8)
+		retlw	N(D6,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(D6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V3_8)
+		retlw	N(E6,V1_8)
+		retlw	N(Fs6,V1_4)
+		retlw	N(G6,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(G5,V1_2)
+		retlw	N(G6,V1_4)
+
+		retlw	N(F6,V1_2)
+		retlw	N(E6,V1_4)
+		retlw	N(F6,V1_2)
+		retlw	N(G6,V1_4)
+		retlw	N(C6,V1_2)
+		retlw	N(C6,V1_4)
+		retlw	N(E6,V3_8)
+		retlw	N(D6,V1_8)
+		retlw	N(C6,V1_4)
+		retlw	N(D6,V1_2)
+		retlw	N(D6,V1_4)
+		retlw	N(D6,V3_8)
+		retlw	N(E6,V1_8)
+		retlw	N(Fs6,V1_4)
+		retlw	N(G6,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(G5,V1_2)
+		retlw	N(Pse,V1_4)
+
+		retlw	ENDTUNE		
+
+		data	67,115,97,115,122,97,114
+
+;---- Fall over to the next "page" (256), to clear LUT from 256-byte boundary ----------
+
+		org	0x100
+				
 ;---- A-Note Test "tune" lookup table
 
 ; Input:  W = Tune Pointer [tune note index]
@@ -929,8 +1028,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	12,vMin
-		Movlf	3,vSec
+		Movlf	13,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -964,7 +1063,7 @@ PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
 ; *** End of critical section for Clock Memory access
-		bsf	INTCON,T0IE		; Enable the Timer0 Interrupt
+		bsf	INTCON,T0IE		; Re-enable the Timer0 Interrupt
 
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
@@ -1213,11 +1312,20 @@ Music3		Cmpfl	vMsType,4		; Music option #3?
 		movf	vTnPtr,W		; Get the Tune Pointer
 		call	JetSetLut		; Play next note in the tune
 		goto	ProcessNote		; Process the note
-Music4		; *** Next music option here!
+Music4		Cmpfl	vMsType,5		; Music option #4?
+		Jge	Music5			; Nupp! Try the next option
+		movf	vTnPtr,W		; Get the Tune Pointer
+		call	WoodycockLut		; Play next note in the tune
+		goto	ProcessNote		; Process the note
+Music5		; *** Next music option here!
 ATest		Cmpfl	vMsType,cPCHTST		; Music option A-Note Test?
 		Jge	PchTest			; Nupp! Try the next option
+		bcf	INTCON,T0IE		; Disable the Timer0 Interrupt (PCLATH!)
+		Movlf	1,PCLATH		; Prep PCLATH for Page 1 access		
 		movf	vTnPtr,W		; Get the Tune Pointer
 		call	ATestTuneLut		; Play next note in the tune
+		clrf	PCLATH			; Restore PCLATH
+		bsf	INTCON,T0IE		; Re-enable the Timer0 Interrupt
 		goto	ProcessNote		; Process the note
 PchTest		Movff	vTnPtr,vBzWid		; Use vTnPtr as free-running pitch ctr
 		decf	vTnPtr,F		; Increase the pitch
