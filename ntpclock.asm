@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.13.0
+; NTPClock Firmware v3.14.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -107,7 +107,7 @@ cVSCRL		equ	4			; Display scroll angular speed [rev/min]
 cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {1}			
-cPDMUL		equ	3			; Buzzer pitch divider multiplier {2}
+cPDMUL		equ	4			; Buzzer pitch divider multiplier {2}
 
 ; Sentinel constants
 
@@ -145,7 +145,7 @@ cTMRCNT		equ	256			; Timer0 required count (Just max out)
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
 cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 
-cITRPPT		equ	54			; Loop iters per point [iter/point] {2}
+cITRPPT		equ	57			; Loop iters per point [iter/point] {2}
 
 cSCRGAP		equ	cPTPARC*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
@@ -197,13 +197,13 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
 ;   ICPerIter = 6 + ( 7 + CCor ) / IterPerPoint + ( 4 + 3 / PitchDiv ) / PitchDivMul (1)
 ;   IterPerPoint = IC_PER_SEC / ( POINT_PER_SEC * ICPerIter )                        (2)
 ;   f(PitchDiv) = IC_PER_SEC / ( 2 * PitchDivMul * PitchDiv * ICPerIter )            (3)
-;   f(256) >~ 390                                                                    (4)
+;   f(256) <~ 392                                                                    (4)
 ;
 ; The literals in (1) represent instruction cycles of loop execution in PtDelay;
 ; Instruction Cycles Per Second (IC_PER_SEC, a.k.a. cICPS) and Points Per Second
-; (POINT_PER_SEC) are known values. Equation (4) states that the lowest frequency
-; that can be played should be around 390 Hz or slightly higher (due to the buzzer's
-; sound qualities).
+; (POINT_PER_SEC) are known values. Equation (4) states that the G4 note should still be
+; playable (for Woodycock, which was pushed up by one octave to due to the buzzer's
+; sound quality profile).
 ;
 ; All values except ICPerIter are integers. Technically speaking, IterPerPoint is also a
 ; function of PitchDiv. However, by putting the PitchDivMul counting "at a lower order"
@@ -336,53 +336,52 @@ cSILDIG		equ	7			; Digit for Silent Note (see {2} above)
 
 ; --- Pitch ID's ('s' = sharp [#])
 
-A4		equ	0			; The lowest note
-As4		equ	1
-Bb4		equ	1			; Equal temperament for max efficiency
-B4		equ	2
+F4		equ	0			; Octave 4 (partial)
+Fs4		equ	1
+Gb4		equ	1			; Equal temperament for max efficiency
+G4		equ	2
+Gs4		equ	3
+Ab4		equ	3
+A4		equ	4
+As4		equ	5
+Bb4		equ	5
+B4		equ	6
 
-C5		equ	3			; Octave 5
-Cs5		equ	4
-Db5		equ	4
-D5		equ	5
-Ds5		equ	6
-Eb5		equ	6
-E5		equ	7
-F5		equ	8
-Fs5		equ	9
-Gb5		equ	9
-G5		equ	10
-Gs5		equ	11
-Ab5		equ	11
-A5		equ	12
-As5		equ	13
-Bb5		equ	13
-B5		equ	14
+C5		equ	7			; Octave 5
+Cs5		equ	8
+Db5		equ	8
+D5		equ	9
+Ds5		equ	10
+Eb5		equ	10
+E5		equ	11
+F5		equ	12
+Fs5		equ	13
+Gb5		equ	13
+G5		equ	14
+Gs5		equ	15
+Ab5		equ	15
+A5		equ	16
+As5		equ	17
+Bb5		equ	17
+B5		equ	18
 
-C6		equ	15			; Octave 6
-Cs6		equ	16
-Db6		equ	16
-D6		equ	17
-Ds6		equ	18
-Eb6		equ	18
-E6		equ	19
-F6		equ	20
-Fs6		equ	21
-Gb6		equ	21
-G6		equ	22
-Gs6		equ	23
-Ab6		equ	23
-A6		equ	24
-As6		equ	25
-Bb6		equ	25
-B6		equ	26
-
-C7		equ	27			; Octave 7 (partial)
-Cs7		equ	28
-Db7		equ	28
-D7		equ	29
-Ds7		equ	30
-Eb7		equ	30
+C6		equ	19			; Octave 6
+Cs6		equ	20
+Db6		equ	20
+D6		equ	21
+Ds6		equ	22
+Eb6		equ	22
+E6		equ	23
+F6		equ	24
+Fs6		equ	25
+Gb6		equ	25
+G6		equ	26
+Gs6		equ	27
+Ab6		equ	27
+A6		equ	28
+As6		equ	29
+Bb6		equ	29
+B6		equ	30
 
 Pse		equ	31			; Pause
 
@@ -655,37 +654,37 @@ DigPitchIDLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 ; Output: W = Pitch divider
 
 NotePitchLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
-		retlw	246			; A4
-		retlw	232			; A#4
-		retlw	219			; B4
-		retlw	207			; C5
-		retlw	195			; C#5
-		retlw	184			; D5
-		retlw	174			; D#5
-		retlw	164			; E5
-		retlw	155			; F5
-		retlw	146			; F#5
-		retlw	138			; G5
-		retlw	130			; G#5
-		retlw	123			; A5
-		retlw	116			; A#5
-		retlw	110			; B5
-		retlw	103			; C6
-		retlw	98			; C#6
-		retlw	92			; D6
-		retlw	87			; D#6
-		retlw	82			; E6
-		retlw	77			; F6
-		retlw	73			; F#6
-		retlw	69			; G6
-		retlw	65			; G#6
-		retlw	61			; A6
-		retlw	58			; A#6
-		retlw	55			; B6
-		retlw	52			; C7
-		retlw	49			; C#7
-		retlw	46			; D7
-		retlw	43			; D#7
+		retlw	246			; F4
+		retlw	232			; F#4
+		retlw	219			; G4
+		retlw	207			; G#4
+		retlw	195			; A4
+		retlw	184			; A#4
+		retlw	174			; B4
+		retlw	164			; C5
+		retlw	155			; C#5
+		retlw	146			; D5
+		retlw	138			; D#5
+		retlw	130			; E5
+		retlw	123			; F5
+		retlw	116			; F#5
+		retlw	109			; G5
+		retlw	103			; G#5
+		retlw	97			; A5
+		retlw	92			; A#5
+		retlw	87			; B5
+		retlw	82			; C6
+		retlw	77			; C#6
+		retlw	73			; D6
+		retlw	69			; D#6
+		retlw	65			; E6
+		retlw	61			; F6
+		retlw	58			; F#6
+		retlw	55			; G6
+		retlw	52			; G#6
+		retlw	49			; A6
+		retlw	46			; A#6
+		retlw	43			; B6
 		retlw	0			; Pause (not used as a divide-by-256)
 
 ;---- Note Duration ID to duration count lookup table
@@ -822,82 +821,82 @@ JetSetLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 
 WoodycockLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 
-		retlw	N(G6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(Bb6,V3_8)
-		retlw	N(A6,V1_8)
-		retlw	N(G6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(G6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(Bb6,V3_8)
-		retlw	N(A6,V1_8)
-		retlw	N(G6,V1_4)
-		retlw	N(Fs6,V1_4)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V1_2)
+		retlw	N(G5,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(Bb5,V3_8)
+		retlw	N(A5,V1_8)
+		retlw	N(G5,V1_4)
+		retlw	N(F5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(F5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(G5,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(Bb5,V3_8)
+		retlw	N(A5,V1_8)
+		retlw	N(G5,V1_4)
+		retlw	N(Fs5,V1_4)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V1_2)
 		retlw	N(Pse,V1_4)
 		
-		retlw	N(G6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(Bb6,V3_8)
-		retlw	N(A6,V1_8)
-		retlw	N(G6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(G6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(Bb6,V3_8)
-		retlw	N(A6,V1_8)
-		retlw	N(G6,V1_4)
-		retlw	N(Fs6,V1_4)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V1_2)
-		retlw	N(G6,V1_4)
+		retlw	N(G5,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(Bb5,V3_8)
+		retlw	N(A5,V1_8)
+		retlw	N(G5,V1_4)
+		retlw	N(F5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(F5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(G5,V1_2)
+		retlw	N(G5,V1_4)
+		retlw	N(Bb5,V3_8)
+		retlw	N(A5,V1_8)
+		retlw	N(G5,V1_4)
+		retlw	N(Fs5,V1_4)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V1_2)
+		retlw	N(G5,V1_4)
 		
-		retlw	N(F6,V1_2)
-		retlw	N(E6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(C6,V1_2)
-		retlw	N(C6,V1_4)
-		retlw	N(E6,V3_8)
-		retlw	N(D6,V1_8)
-		retlw	N(C6,V1_4)
-		retlw	N(D6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V3_8)
-		retlw	N(E6,V1_8)
-		retlw	N(Fs6,V1_4)
-		retlw	N(G6,V1_2)
+		retlw	N(F5,V1_2)
+		retlw	N(E5,V1_4)
+		retlw	N(F5,V1_2)
 		retlw	N(G5,V1_4)
+		retlw	N(C5,V1_2)
+		retlw	N(C5,V1_4)
+		retlw	N(E5,V3_8)
+		retlw	N(D5,V1_8)
+		retlw	N(C5,V1_4)
+		retlw	N(D5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V3_8)
+		retlw	N(E5,V1_8)
+		retlw	N(Fs5,V1_4)
 		retlw	N(G5,V1_2)
-		retlw	N(G6,V1_4)
+		retlw	N(G4,V1_4)
+		retlw	N(G4,V1_2)
+		retlw	N(G5,V1_4)
 
-		retlw	N(F6,V1_2)
-		retlw	N(E6,V1_4)
-		retlw	N(F6,V1_2)
-		retlw	N(G6,V1_4)
-		retlw	N(C6,V1_2)
-		retlw	N(C6,V1_4)
-		retlw	N(E6,V3_8)
-		retlw	N(D6,V1_8)
-		retlw	N(C6,V1_4)
-		retlw	N(D6,V1_2)
-		retlw	N(D6,V1_4)
-		retlw	N(D6,V3_8)
-		retlw	N(E6,V1_8)
-		retlw	N(Fs6,V1_4)
-		retlw	N(G6,V1_2)
+		retlw	N(F5,V1_2)
+		retlw	N(E5,V1_4)
+		retlw	N(F5,V1_2)
 		retlw	N(G5,V1_4)
+		retlw	N(C5,V1_2)
+		retlw	N(C5,V1_4)
+		retlw	N(E5,V3_8)
+		retlw	N(D5,V1_8)
+		retlw	N(C5,V1_4)
+		retlw	N(D5,V1_2)
+		retlw	N(D5,V1_4)
+		retlw	N(D5,V3_8)
+		retlw	N(E5,V1_8)
+		retlw	N(Fs5,V1_4)
 		retlw	N(G5,V1_2)
+		retlw	N(G4,V1_4)
+		retlw	N(G4,V1_2)
 		retlw	N(Pse,V1_4)
 
 		retlw	ENDTUNE		
@@ -1028,7 +1027,7 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	13,vMin
+		Movlf	14,vMin
 		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
@@ -1372,9 +1371,6 @@ MagniLoop
 	endif
 		nop				; Additional calc'd per-point delay {2}
 		nop
-		nop
-		nop
-		nop
 		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
 		Jclr	vFlags2,bQUIDLE,CoreLoop; No quit upon Index Hole detection
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
@@ -1538,7 +1534,6 @@ IncYear		incf	vYear,F			; Increment year
 
 DayRoll		movlw	0x03			; Mask 0000 0011
 		andwf	vYear,W			; W=0: leap year, W=non-0: regular year
-		skipz
 		movlw	-1			; Regular year: lookup table offset -1
 		skipnz
 		movlw	11			; Leap year: lookup table offset 11
