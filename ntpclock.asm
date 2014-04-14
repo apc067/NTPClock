@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.0
+; NTPClock Firmware v3.14.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -47,11 +47,11 @@
 ;***************************************************************************************
 
 ; 1. Display Modes
-;    - Alternating:   vDspMod = 0 - Stationary display w/ alternating date/time exposure
-;    - Magnetic Spin: vDspMod = 1 - Rapid right scroll w/ slow-down for time & date
-;    - Left-Scroll:   vDspMod = 2 - Continuous left scroll
-;    - Stand-Scroll:  vDspMod = 3 - Quasi-stationary (for fun / to tune display timing)
-;    - Right-Scroll:  vDspMod = 4 - Continuous right scroll
+;    - Alternating:  vDspMod = 0 - Stationary display w/ alternating date/time exposure
+;    - MagnetoSpin:  vDspMod = 1 - Rapid right scroll w/ slow-down for time & date
+;    - Left-Scroll:  vDspMod = 2 - Continuous left scroll
+;    - Stand-Scroll: vDspMod = 3 - Quasi-stationary (for fun / to tune display timing)
+;    - Right-Scroll: vDspMod = 4 - Continuous right scroll
 ;
 ; 2. Operating Modes
 ;    - Normal:      vFlags2:bDEVINF = 0 - Displaying time & date
@@ -178,7 +178,7 @@ cSHPSP1		equ	cPRESP-cPRXCOR-5	; Short Post-String Pause #1 {5}
 cSHPSP2		equ	cPRESP-cSHPSP1-cRBIDXP	; Short Post-String Pause #2 {5}
 cCATCHP		equ	6*cSCRGAP		; Stat display resync catchup pause (5}
 cMAGP		equ	cSCRGAP+2		; Slightly too long pause for Mag Spin
-cMAGGAP		equ	4*cSCRGAP		; Gap for Mag Spin's rapid right scroll
+cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
  		
  		if	cPRESP>255 		; Check the value of cPRESP {6}
 		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
@@ -995,7 +995,7 @@ QuitLoop	Point	100			; Short delay to kill any button bounce
 ; Normal boot
 
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
-		Movlf	1,vDspMod		; Display Mode = Magnetic Spin
+		Movlf	1,vDspMod		; Display Mode = MagnetoSpin
 		clrf	vFshCtr			; Reset the Flashing Character Counter
 		bsf	vFlags2,bFROZEN		; Freeze the clock [it became Dizzy]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
@@ -1028,7 +1028,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	0,vSec
+		Movlf	1,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1207,7 +1207,7 @@ SawIdx		Point	cPRXCOR			; Yepp! Idx Hole Parallax Corr needed
 		bcf	vFlags2,bARCCNT		; Upcoming arc must be Arc 0 [again]
 		return
 ScrollDisp	Point	cPOSTSP			; Post-String Pause
-		Cmpfl	vDspMod,1		; Display Mode is Magnetic Spin?
+		Cmpfl	vDspMod,1		; Display Mode is MagnetoSpin?
 		Jnz	TradScroll		; Nupp! Handle the "traditional" scrolls
 		Point	cMAGP			; Complete the arc with a little extra
 		clrf	vCurNum			; Assume Mag Spin Gap (borrow vCurNum)
@@ -1217,9 +1217,9 @@ ScrollDisp	Point	cPOSTSP			; Post-String Pause
 		Jset	PORTB,bINDEXH,NoIdx	; Index Hole is being seen?
 		incf	vCurNum,F		; Yepp! Mark Mag Spin Gap not needed
 		bsf	vFlags2,bIDXPA		; Mark Idx Hole was seen this time
-NoIdx		tst	vCurNum			; Magnetic Spin Gap needed?
+NoIdx		tst	vCurNum			; MagnetoSpin Gap needed?
 		Jnz	ZeroGap			; Nope! Done with pauses
-		Point	cMAGGAP			; Magnetic Spin Gap
+		Point	cMAGGAP			; MagnetoSpin Gap
 		goto	ZeroGap			; Done with pauses for this scenario
 TradScroll	Cmpfl	vDspMod,3		; Display Mode is Stand-Scroll?
 		Jz	OneGap			; Yepp! 1 Gap
