@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.1
+; NTPClock Firmware v3.14.2
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -78,6 +78,14 @@
 ; 6. Hour Notations
 ;    - 12-hour: "12/24h" Jumper off - Hrs = 1..12; decimal pts on for AM, flash for PM
 ;    - 24-hour: "12/24h" Jumper on  - Hrs = 0..23; decimal pts always on
+;
+; 7. Debug Features
+;    - Time Magnifier: Slows down the display speed 64 times, to verify proper digit
+;      lighting sequence
+;    - Geometry Characterization: Different features to study the display geometry
+;        - Index Hole LED visibility period [points] displayed in place of year
+;        - Decimal point lit while Index Hole LED is visible
+;        - A short flash of '0' in the beginning of each arc's display
 
 
 ;***************************************************************************************
@@ -96,7 +104,8 @@
 
 ;==== Debug Control ====================================================================
 
-DDEBUG		equ	0			; Display Debug (stretch time by 64)
+DBG_TMAG	equ	0			; Time Magnifier (stretch time by 64)
+DBG_GEOM	equ	0			; Display Geometry Characterization
 
 
 ;==== Constants ========================================================================
@@ -155,12 +164,18 @@ cTCKPS		equ	cICPS/cTMRDIV		; Ticks per sec [tick/s]
 cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
 cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
 
-		if	cTCKPS*cTMRDIV!=cICPS
+	if	cTCKPS*cTMRDIV!=cICPS
 		messg	"*** WARNING! Timer tick period is not a divisor of 1 second!
-		endif
+	endif
 
 ; Point delay constants for display layout [point]
 
+	if DBG_GEOM				; *** Geometry Characterization start
+cGDGLTP		equ	3			; Digit Light-Up Pause for arc marking
+cGC		equ	(16+cGDGLTP)/2		; Geom Charac corr (16: PtDelay cycles)
+	else					; *** Geometry Characterization end
+cGC		equ	0			; No Geom Charactierization correction
+	endif
 cDIGLTP		equ	10			; Digit Light-Up Pause
 cDIGWP		equ	cDIGWAN			; Digit Width Pause
 cDIGIT		equ	cDIGLTP+cDIGWP		; Total Digit width
@@ -169,7 +184,7 @@ cHDIGP		equ	cDIGIT/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
-cPRESP		equ	(cPTPARC-cSTRING)/2	; Pre-String Pause
+cPRESP		equ	(cPTPARC-cSTRING)/2-cGC	; Pre-String Pause
 cARCCOR		equ	0			; Arc Correction {3}
 cPOSTSP		equ	cPRESP-cSCRGAP+cARCCOR	; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
@@ -1028,7 +1043,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	1,vSec
+		Movlf	2,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1060,9 +1075,20 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 		bsf	PORTB,bPRINTM		; Set the PrintTime diagnostic bit
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
+	if DBG_GEOM				; *** Geometry Characterization start
+		skipclr	vFlags2,bARCCNT		; Was Arc 1 just printed? {*}
+		clrf	vYear			; Yupp! Let's reset the Idx Hole LED ctr
+	endif					; *** Geometry Characterization end
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
 ; *** End of critical section for Clock Memory access
 		bsf	INTCON,T0IE		; Re-enable the Timer0 Interrupt
+		
+; {*} Note: Typically Arc 1 carries the date (incl. vYear, which is being reused to
+; display the measured Index Hole LED visibility period). The only exception is when the
+; date is on the front [Arc 0 by definition] on a Stationary display, such as the
+; Alternating display mode or the Setting operating state. In this case, the Index Hole
+; LED visibility count will be slightly incorrect (as the "wrong-sided" counter reset
+; occurs just while the Index Hole LED is visible).
 
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
@@ -1155,6 +1181,11 @@ PrintDig	Movff	vDspPtr,FSR
 ; Note: Also plays the selected tune [or Chirpie]
 
 OutputArc	call	SoundMusic		; Sound that music for the arc		
+	if DBG_GEOM				; *** Geometry Characterization start
+		Movlf	0,PORTA			; Light the Nixie to mark start of arc
+		Point	cGDGLTP			; Just for a short time
+		Movlf	cSPACE,PORTA		; Extinguish the Nixie
+	endif					; *** Geometry Characterization end
 		Movlf	pDspBuf,vDspPtr		; Display Buffer pointer to time
 		clrf	vCurNum			; Assume time desired (borrow vCurNum)
 		tst	vSetPtr			; Setting State?
@@ -1365,10 +1396,18 @@ PtDelay		bsf	PORTB,bIDLE		; Set the Idle diagnostic bit
 		tst	vPntCtr			; Is it 0?
 		Jz	QuitIdle		; Yepp! Get out of here quick
 PointLoop	
-	if DDEBUG
-		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier (Debug only)
+	if DBG_TMAG				; *** Time Magnifier start
+		Movlf	cMAGCNT,vMagCtr		; Load the Time Magnifier Counter
 MagniLoop
-	endif
+	endif					; *** Time Magnifier end
+	if DBG_GEOM				; *** Geometry Characterization start
+		skipset PORTB,bINDEXH		; Index Hole is being seen?
+		bsf	PORTA,bDP		; Yepp! Light the decimal point
+		skipclr PORTB,bINDEXH		; Index Hole is not being seen?
+		bcf	PORTA,bDP		; Yepp! Extinguish the decimal point
+		skipset	PORTB,bINDEXH		; Index Hole is being seen?
+		incf	vYear,F			; Yepp! Measure its length in points
+	endif					; *** Geometry Characterization end
 		nop				; Additional calc'd per-point delay {2}
 		nop
 		Movlf	cITRPPT,vItrCtr		; Load the number of iters for 1 point
@@ -1386,10 +1425,10 @@ CoreLoop	decfsz	vPDMCtr,F		; Buzzer pitch div multiplier done yet?
 		xorwf	PORTB,F
 NoToggle	decfsz	vItrCtr,F		; 1 point passed yet?		
 		goto	CoreLoop		; Nope! Stay in the Core Loop
-	if DDEBUG
-		decfsz	vMagCtr,F		; Magnification done yet? (Debug only)
+	if DBG_TMAG				; *** Time Magnifier start
+		decfsz	vMagCtr,F		; Magnification done yet?
 		goto	MagniLoop		; Nope! Stay in loop
-	endif
+	endif					; *** Time Magnifier end
 		decfsz	vPntCtr,F		; Point delay passed yet?
 		goto	PointLoop		; Nope! Stay in loop
 QuitIdle	bcf	PORTB,bIDLE		; Clear the Idle diagnostic bit
