@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.2
+; NTPClock Firmware v3.14.3
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -187,7 +187,7 @@ cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPARC-cSTRING)/2-cGC	; Pre-String Pause
 cARCCOR		equ	0			; Arc Correction {3}
 cPOSTSP		equ	cPRESP-cSCRGAP+cARCCOR	; Post-String Pause (for Left-Scroll)
-cPRXCOR		equ	80			; Index Hole Parallax Correction {4}
+cPRXCOR		equ	70			; Index Hole Parallax Correction {4}
 cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
 cSHPSP1		equ	cPRESP-cPRXCOR-5	; Short Post-String Pause #1 {5}
 cSHPSP2		equ	cPRESP-cSHPSP1-cRBIDXP	; Short Post-String Pause #2 {5}
@@ -1043,7 +1043,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	2,vSec
+		Movlf	3,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
