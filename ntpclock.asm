@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.3
+; NTPClock Firmware v3.14.4
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -1043,7 +1043,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	3,vSec
+		Movlf	4,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1075,21 +1075,10 @@ PrintTime	incf	vFshCtr,F		; Increment the Flashing Chr Counter
 		bsf	PORTB,bPRINTM		; Set the PrintTime diagnostic bit
 PrintLoop	call	PrintNum		; Print the value
 		Djnz	vGenCtr,PrintLoop	; Loop until done
-	if DBG_GEOM				; *** Geometry Characterization start
-		skipclr	vFlags2,bARCCNT		; Was Arc 1 just printed? {*}
-		clrf	vYear			; Yupp! Let's reset the Idx Hole LED ctr
-	endif					; *** Geometry Characterization end
 		bcf	PORTB,bPRINTM		; Clear the PrintTime diagnostic bit
 ; *** End of critical section for Clock Memory access
 		bsf	INTCON,T0IE		; Re-enable the Timer0 Interrupt
 		
-; {*} Note: Typically Arc 1 carries the date (incl. vYear, which is being reused to
-; display the measured Index Hole LED visibility period). The only exception is when the
-; date is on the front [Arc 0 by definition] on a Stationary display, such as the
-; Alternating display mode or the Setting operating state. In this case, the Index Hole
-; LED visibility count will be slightly incorrect (as the "wrong-sided" counter reset
-; occurs just while the Index Hole LED is visible).
-
 ; 2 Remaining chores
 		bsf	pDspHr+1,bDP		; Decimal point after hours
 		bsf	pDspMin+1,bDP		; Decimal point after minutes
@@ -1181,11 +1170,6 @@ PrintDig	Movff	vDspPtr,FSR
 ; Note: Also plays the selected tune [or Chirpie]
 
 OutputArc	call	SoundMusic		; Sound that music for the arc		
-	if DBG_GEOM				; *** Geometry Characterization start
-		Movlf	0,PORTA			; Light the Nixie to mark start of arc
-		Point	cGDGLTP			; Just for a short time
-		Movlf	cSPACE,PORTA		; Extinguish the Nixie
-	endif					; *** Geometry Characterization end
 		Movlf	pDspBuf,vDspPtr		; Display Buffer pointer to time
 		clrf	vCurNum			; Assume time desired (borrow vCurNum)
 		tst	vSetPtr			; Setting State?
@@ -1205,7 +1189,15 @@ TimArc0		skipclr	vFlags2,bARCCNT		; Outputting Arc 0?
 		tst	vCurNum			; Is the desired output time?
 		Jz	PtrDone			; Yepp! Pointer is at the right position
 		Movlf	pDspBuf+6,vDspPtr	; Nope! Display Buffer pointer to date
-PtrDone		Point	cPRESP			; Pre-String Pause
+PtrDone		
+	if DBG_GEOM				; *** Geometry Characterization start
+		skipz				; Outputting date now? (Z flag still OK)
+		clrf	vYear			; Yupp! Reset the Idx Hole LED ctr {*}
+		Movlf	0,PORTA			; Light the Nixie to mark start of arc
+		Point	cGDGLTP			; Just for a short time
+		Movlf	cSPACE,PORTA		; Extinguish the Nixie
+	endif					; *** Geometry Characterization end
+		Point	cPRESP			; Pre-String Pause
 		Cmpfl	vMsType,cISSMOO		; Smooth-style tune?
 		skipge				; Yepp! Do not turn buzzer off yet
 		call	BuzzerOff		; Turn buzzer off
@@ -1260,6 +1252,11 @@ OneGap		Point	cSCRGAP			; Stand-Scroll: 1 Gap
 ZeroGap		movlw	cARCMSK			; Invert the Arc Count bit
 		xorwf	vFlags2,F
 		return
+
+; {*} Note: If date is about to be output in this arc, it means that the value of the
+; Index Hole visibility counter will be displayed in this arc as well, therefore this
+; is the moment to reset it in back the Clock Memory [vYear] (since it was already
+; printed into the Output Buffer by the preceding PrintTime).
 
 
 ;------ Output Suppressed Digits Pause
