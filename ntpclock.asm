@@ -1,15 +1,9 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.4
+; NTPClock Firmware v3.14.5
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
-
-
-;        1         2         3         4         5         6         7         8        
-; 34567890123456789012345678901234567890123456789012345678901234567890123456789012345678
-;
-; Recommended tab spacing: 8
 
 
 ;***************************************************************************************
@@ -54,8 +48,8 @@
 ;    - Right-Scroll: vDspMod = 4 - Continuous right scroll
 ;
 ; 2. Operating Modes
-;    - Normal:      vFlags2:bDEVINF = 0 - Displaying time & date
-;    - Device Info: vFlags2:bDEVINF = 1 - Displaying FW version & req'd HW version instead
+;    - Normal:      vFlags2:bDEVINF = 0 - Display time & date
+;    - Device Info: vFlags2:bDEVINF = 1 - Display FW version & req'd HW version instead
 ;
 ; 3. Operating States (in Normal Operating Mode)
 ;    - Running: vSetPtr = 0     - Regular clock operation
@@ -136,7 +130,6 @@ cPTPARC		equ	1000			; Points per arc [point/arc]
 cARCPRV		equ	2			; Arcs per revolution [arc/rev]
 cPTPRV		equ	cPTPARC*cARCPRV		; Points per revolution [point/rev]
 
-
 ; Geometrical constants
 
 cRMIN		equ	50			; Innermost digit from center [mm]
@@ -158,14 +151,14 @@ cITRPPT		equ	57			; Loop iters per point [iter/point] {2}
 
 cSCRGAP		equ	cPTPARC*cVSCRL/cVSPIN	; Angle gap causing scroll [point]
 cDIGWAN		equ	50			; Max angle of digit width [point]
-						; = arctan(cDIGWID/(2*cRMIN))*cPTPREV/PI
+						; = arctan(cDIGWID/(2*cRMIN))*cPTPRV/PI
 cTMRDIV		equ	cTMRPSC*cTMRCNT		; Total timer divider
 cTCKPS		equ	cICPS/cTMRDIV		; Ticks per sec [tick/s]
 cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
 cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
 
 	if	cTCKPS*cTMRDIV!=cICPS
-		messg	"*** WARNING! Timer tick period is not a divisor of 1 second!
+		messg	"*** WARNING! Timer tick period is not a divisor of 1 second!"
 	endif
 
 ; Point delay constants for display layout [point]
@@ -217,8 +210,8 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; The literals in (1) represent instruction cycles of loop execution in PtDelay;
 ; Instruction Cycles Per Second (IC_PER_SEC, a.k.a. cICPS) and Points Per Second
 ; (POINT_PER_SEC) are known values. Equation (4) states that the G4 note should still be
-; playable (for Woodycock, which was pushed up by one octave to due to the buzzer's
-; sound quality profile).
+; playable (for Woodycock, which was pushed up by one octave due to the buzzer's sound
+; quality profile).
 ;
 ; All values except ICPerIter are integers. Technically speaking, IterPerPoint is also a
 ; function of PitchDiv. However, by putting the PitchDivMul counting "at a lower order"
@@ -953,13 +946,13 @@ ATestTuneLut	addwf	PCL,F 			; Add offset to PC for computed GOTO
 
 ; HW configuration errands
 
-Start		Movlf	cSPACE,PORTA		; Blank the Nixie
+Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 		clrf	PORTB			; Clear [those few outputs of] Port B
 		
 		bsf	STATUS,RP0		; SWITCH TO BANK 1
 		errorlevel -302			; Disable msg 302 ("Not in bank 0")
 		clrf	TRISA			; PortA: All output
-		Movlf	b'00101011',TRISB	; PortB: Bit 2, 4, 6 & 7: I; Rest: O
+		Movlf	b'00101011',TRISB	; PortB: Bit 2, 4, 6 & 7: O; Rest: I
 		bcf	OPTION_REG,NOT_RBPU	; Turn on PortB's weak pullups
 		bcf	OPTION_REG,PSA		; Prescaler assigned to Timer0
 		bsf	OPTION_REG,PS2		; Prescaler: 1:256
@@ -1003,6 +996,7 @@ OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
 DoneOrig	call	PrintTime		; Device info -> Display Buffer
 		call	OutputArc		; Display Buffer -> Nixie
 		goto	DevInfLoop		; Device Info Loop iteration done
+
 QuitLoop	Point	100			; Short delay to kill any button bounce
 		Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
 		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
@@ -1043,7 +1037,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	4,vSec
+		Movlf	5,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1255,7 +1249,7 @@ ZeroGap		movlw	cARCMSK			; Invert the Arc Count bit
 
 ; {*} Note: If date is about to be output in this arc, it means that the value of the
 ; Index Hole visibility counter will be displayed in this arc as well, therefore this
-; is the moment to reset it in back the Clock Memory [vYear] (since it was already
+; is the moment to reset it back in the Clock Memory [vYear] (since it was already
 ; printed into the Output Buffer by the preceding PrintTime).
 
 
@@ -1608,7 +1602,7 @@ ReadButton	Jset	PORTB,bBUTTON,NoPress	; If button not pressed, proceed as such
 		clrf	vButTck			; Reset the Button Tick Counter
 		tst	vSetPtr			; In Setting State right now?
 		Jnz	CtPress			; Yepp! No action upon start of press
-		Jclr	vFlags2,bFROZEN,CtPress	; If clock is not Dizzy, -"-
+		Jclr	vFlags2,bFROZEN,CtPress	; If clock is not Dizzy, no action either
 		Movlf	cTCKPS,vSecTck		; Reset the Ticks Per Sec Counter
 		bcf	vFlags2,bFROZEN		; Unfreeze the clock
 		bsf	vFlags,bCANSHT		; Cancel Short Button Event

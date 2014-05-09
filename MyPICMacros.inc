@@ -2,15 +2,7 @@
 ;
 ; Library of useful macros for the Microchip PIC [particularly PIC16*] microcontrollers
 ;
-; (C) Peter Csaszar, 2006
-; http://www.nixiana.com
-
-
-;        1         2         3         4         5         6         7         8        
-; 34567890123456789012345678901234567890123456789012345678901234567890123456789012345678
-;
-; Recommended font: Courier New, 9 pt [for printing]
-; Recommended tab:  8
+; (C) Peter Csaszar - http://www.nixiana.com
 
 
 ; Important note! Care must be taken when using macros after "btfs?" instructions (now
@@ -180,7 +172,7 @@ Retge		macro				; Return if greater than or equal
 ; ATTENTION! In these macros, the destination operand comes last, following the Motorola
 ; tradition, and also the convention suggested by most PIC mnemonics.
 ;
-; WARNING! Remember; these macros destroy the W register!
+; WARNING: These macros destroy the W register
 
 ;---- Move register to register --------------------------------------------------------
 
@@ -211,7 +203,7 @@ Movlf		macro	mcLit,mvReg
 ; equivalent subtraction] comes first, so that the order of operands matches that of
 ; the actual mathematical comparisons. (In this way it is MUCH less confusing.)
 ;
-; WARNING! Remember; these macros (except tst) destroy the W register!
+; WARNING: These macros (except tst) destroy the W register
 
 ;---- Compare register to W ------------------------------------------------------------
 
@@ -220,7 +212,7 @@ Movlf		macro	mcLit,mvReg
 ; Operation: Reg ? W
 ;
 ; Resulting flags: C:Reg>=W, Z:Reg=W
-; WARNING! Reverse Carry behavior for sub*!
+; WARNING: Reverse Carry behavior for sub*
 
 cmpfw		macro	mvReg
 		subwf	mvReg,W
@@ -234,7 +226,7 @@ cmpfw		macro	mvReg
 ; Operation: Reg1 ? Reg2
 ;
 ; Resulting flags: C:Reg1>=Reg2, Z:Reg1=Reg2
-; WARNING! Reverse Carry behavior for sub*!
+; WARNING: Reverse Carry behavior for sub*
 
 Cmpff		macro	mvReg1,mvReg2
 		movf	mvReg2,W
@@ -248,7 +240,7 @@ Cmpff		macro	mvReg1,mvReg2
 ; Operation: Reg ? Lit
 ;
 ; Resulting flags: C:Reg>=Lit, Z:Reg=Lit
-; WARNING! Reverse Carry behavior for sub*!
+; WARNING: Reverse Carry behavior for sub*
 
 Cmpfl		macro	mvReg,mcLit
 		movlw	mcLit
@@ -262,9 +254,8 @@ Cmpfl		macro	mvReg,mcLit
 ; Operation: Reg ? 0
 ;
 ; Resulting flags: Z:Reg=0
-; Note: The C flag remains unaffected.
+; Note: The C flag remains unaffected
 
 tst		macro	mvReg
 		movf	mvReg,F
 		endm
-	
