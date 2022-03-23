@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.5
+; NTPClock Firmware v3.14.6
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -978,6 +978,7 @@ Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
 		clrf	vTnPtr			; Reset the Tune Pointer
 
+		Point	255			; Allow the button filter cap to charge
 		Jset	PORTB,bBUTTON,NormBoot	; Button is not pressed - normal boot
 		
 ; The "hijacked" main program to show device info until next button press
@@ -1037,7 +1038,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 		Movlf	14,vMin
-		Movlf	5,vSec
+		Movlf	6,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
