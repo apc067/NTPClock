@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.14.6
+; NTPClock Firmware v3.15.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -41,11 +41,13 @@
 ;***************************************************************************************
 
 ; 1. Display Modes
-;    - Alternating:  vDspMod = 0 - Stationary display w/ alternating date/time exposure
-;    - MagnetoSpin:  vDspMod = 1 - Rapid right scroll w/ slow-down for time & date
-;    - Left-Scroll:  vDspMod = 2 - Continuous left scroll
-;    - Stand-Scroll: vDspMod = 3 - Quasi-stationary (for fun / to tune display timing)
-;    - Right-Scroll: vDspMod = 4 - Continuous right scroll
+;    - Alternating:   vDspMod = 0 - Stationary display w/ alternating time/date in front
+;    - Date-In-Front: vDspMod = 1 - Stationary display w/ always date in front
+;    - Time-In-Front: vDspMod = 2 - Stationary display w/ always time in front
+;    - MagnetoSpin:   vDspMod = 3 - Rapid right scroll w/ slow-down for time & date
+;    - Left-Scroll:   vDspMod = 4 - Continuous left scroll
+;    - Stand-Scroll:  vDspMod = 5 - Quasi-stationary (for fun / to tune display timing)
+;    - Right-Scroll:  vDspMod = 6 - Continuous right scroll
 ;
 ; 2. Operating Modes
 ;    - Normal:      vFlags2:bDEVINF = 0 - Display time & date
@@ -64,7 +66,7 @@
 ;
 ; 5. Display Behaviors
 ;    - Stationary: Display position is stabilized using the Index Hole
-;       - Display Mode = Alternating  -OR-
+;       - Display Mode = Alternating, Date-In-Front or Time-In-Front  -OR-
 ;       - Operating State = Setting   -OR-
 ;       - Operating Condition = Frozen [incl. Dizzy] 
 ;    - Scrolling: Not Stationary
@@ -112,10 +114,16 @@ cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {1}			
 cPDMUL		equ	4			; Buzzer pitch divider multiplier {2}
 
-; Sentinel constants
+; Display Mode constants
 
-cNUMMOD		equ	5			; Number of different display modes
-cNUMMUS		equ	7			; Number of different music options
+cMODALT		equ	0			; Alternating
+cMODDAT		equ	1			; Date-In-Front
+cMODTIM		equ	2			; Time-In-Front
+cMODMAG		equ	3			; MagnetoSpin
+cMODLFT		equ	4			; Left-Scroll
+cMODSTA		equ	5			; Stand-Scroll
+cMODRGT		equ	6			; Right-Scroll
+cNUMMOD		equ	7			; Number of different display modes
 
 ; Time Magnifier (for DEBUG reasons)
 
@@ -330,6 +338,7 @@ bIDLE		equ	7			; Idle output's bit#
 
 ; Music-related constants
 
+cNUMMUS		equ	7			; Number of different music options
 cDRWID		equ	3			; # of Dur ID bits in ND (Also see {$}!)
 cDRMSK		equ	(1<<cDRWID)-1		; Duration ID mask in Note Descriptor
 cPCHMSK		equ	(~cDRMSK&0xFF)>>cDRWID	; Pitch ID mask in Note D. [after shift]
@@ -431,7 +440,8 @@ vFlags2		equ	0x0F			; System flags #2
 ;
 ; vDspMod: Determines the Display Mode ("Mode" for short)
 ;
-;   0 - Alternating, 1 - Mag Spin, 2 - Left-Scroll, 3 - Stand-Scroll, 4 - Right-Scroll
+;   0 - Alternating, 1 - Date-In-Front, 2 - Time-In-Front, 3 - MagnetoSpin,
+;   4 - Left-Scroll, 5 - Stand-Scroll, 6 - Right-Scroll
 ;
 ; vSetPtr: Determines the Operating State ("State" for short)
 ;
@@ -984,7 +994,7 @@ Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 ; The "hijacked" main program to show device info until next button press
 
 		call	PreloadDevInf		; Preload Clock memory w/ device info
-		Movlf	4,vDspMod		; Display Mode = Right-Scroll
+		Movlf	cMODRGT,vDspMod		; Display Mode = Right-Scroll
 		bsf	vFlags2,bDEVINF		; Indicate the Device Info Condition
 		
 ; Device Info Loop (Borrow the bSHORTB flag)
@@ -1005,7 +1015,7 @@ QuitLoop	Point	100			; Short delay to kill any button bounce
 ; Normal boot
 
 NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
-		Movlf	1,vDspMod		; Display Mode = MagnetoSpin
+		Movlf	cMODMAG,vDspMod		; Display Mode = MagnetoSpin
 		clrf	vFshCtr			; Reset the Flashing Character Counter
 		bsf	vFlags2,bFROZEN		; Freeze the clock [it became Dizzy]
 		bsf	INTCON,GIE		; Enable Global Interrupts  
@@ -1037,8 +1047,8 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	14,vMin
-		Movlf	6,vSec
+		Movlf	15,vMin
+		Movlf	0,vSec
 		Movlf	1,vMonth		; Required minimum hardware version#
 		Movlf	3,vDay
 		Movlf	0,vYear
@@ -1049,8 +1059,8 @@ PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
 
 ; Output: Z=0 (NZ): Not Scrolling, Z=1 (Z): Scrolling
 
-IsScroll	tst	vDspMod			; Display Mode = Alternating?
-		Jz	NoScroll		; Yepp! Not Scrolling
+IsScroll	Cmpfl	vDspMod,cMODMAG		; Display Mode is a stationary one?
+		Jlt	NoScroll		; Yepp! Not Scrolling
 		tst	vSetPtr			; Operation State = Setting?
 		Retnz				; Yepp! Not Scrolling
 		skipclr	vFlags2,bFROZEN		; Clock is in Frozen Condition?
@@ -1172,13 +1182,15 @@ OutputArc	call	SoundMusic		; Sound that music for the arc
 		Cmpfl	vSetPtr,pClkMem+3	; Yepp! Date is being set?
 		Jlt	TimArc0			; Nope! Keep time in Arc 0
 		goto	DatArc0			; Yepp! Put date to Arc 0
-NoSet		Jset	vFlags2,bFROZEN,TimArc0	; No set: Time on 0 if 1) clock Dizzy
-		tst	vDspMod			; 2) display is not Alternating
-		Jnz	TimArc0			; Keep time in Arc 0
+NoSet		Jset	vFlags2,bFROZEN,TimArc0	; No set: Clock is Dizzy: Time on 0
+		Cmpfl	vDspMod,cMODTIM		; Display Mode = Time-In-Front / scroll?
+		Jge	TimArc0			; Yepp! Time on 0
+		tst	vDspMod			; Display Mode = Alternating?
+		Jnz	DatArc0			; Nope! Date on 0
 		incf	vSec,W			; Increment: put 59->00 transit to front
-		andlw	0x02			; Find the appropriate bit
-		Jz	TimArc0			; 3) desired 2-second interval is on
-DatArc0		comf	vCurNum,F		; Desired output is date
+		andlw	0x02			; Desired 2-second interval is now?
+		Jz	TimArc0			; Yepp! Time on 0
+DatArc0		comf	vCurNum,F		; Desired output for Arc 0 is date
 TimArc0		skipclr	vFlags2,bARCCNT		; Outputting Arc 0?
 		comf	vCurNum,F		; Nope! Desired output is the opposite
 		tst	vCurNum			; Is the desired output time?
@@ -1225,7 +1237,7 @@ SawIdx		Point	cPRXCOR			; Yepp! Idx Hole Parallax Corr needed
 		bcf	vFlags2,bARCCNT		; Upcoming arc must be Arc 0 [again]
 		return
 ScrollDisp	Point	cPOSTSP			; Post-String Pause
-		Cmpfl	vDspMod,1		; Display Mode is MagnetoSpin?
+		Cmpfl	vDspMod,cMODMAG		; Display Mode is MagnetoSpin?
 		Jnz	TradScroll		; Nupp! Handle the "traditional" scrolls
 		Point	cMAGP			; Complete the arc with a little extra
 		clrf	vCurNum			; Assume Mag Spin Gap (borrow vCurNum)
@@ -1239,7 +1251,7 @@ NoIdx		tst	vCurNum			; MagnetoSpin Gap needed?
 		Jnz	ZeroGap			; Nope! Done with pauses
 		Point	cMAGGAP			; MagnetoSpin Gap
 		goto	ZeroGap			; Done with pauses for this scenario
-TradScroll	Cmpfl	vDspMod,3		; Display Mode is Stand-Scroll?
+TradScroll	Cmpfl	vDspMod,cMODSTA		; Display Mode is Stand-Scroll?
 		Jz	OneGap			; Yepp! 1 Gap
 		Jlt	ZeroGap			; Left-Scroll: 0 Gaps
 		Point	cSCRGAP			; Right-Scroll: 2 Gaps
