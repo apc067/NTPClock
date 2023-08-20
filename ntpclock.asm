@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.15.0
+; NTPClock Firmware v3.16.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -113,6 +113,8 @@ cLNGTM		equ	750			; Long Button Press min time [ms]
 cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {1}			
 cPDMUL		equ	4			; Buzzer pitch divider multiplier {2}
+cFWVTM		equ	4			; Firmware version display duration [s]
+cHWVTM		equ	2			; Hardware version display duration [s]
 
 ; Display Mode constants
 
@@ -152,6 +154,9 @@ cTMRCNT		equ	256			; Timer0 required count (Just max out)
 
 ; Calculated system constants (Note: tick = Timer0 interrupt)
 
+cVSPINS		equ	cVSPIN/60		; Carousel rotation speed [rev/s]
+cFWVACT		equ	cFWVTM*cVSPINS*cARCPRV	; Firmware version arc count [arc]
+cHWVACT		equ	cHWVTM*cVSPINS*cARCPRV	; Hardware version arc count [arc]
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
 cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 
@@ -979,8 +984,6 @@ Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 		clrf	vSetPtr			; Operating State = Running
 		clrf	vFlags			; Reset all flags
 		clrf	vFlags2
-		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
-		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		clrf	vButTck			; Clear the Button Hold Tick Counter
 		clrf	vBzCtr			; Clear the Buzzer Half-Cycle Counter
 		Movlf	cPDMUL,vPDMCtr		; Load the Pitch Div Multiplier Counter
@@ -988,33 +991,30 @@ Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
 		clrf	vTnPtr			; Reset the Tune Pointer
 
-		Point	255			; Allow the button filter cap to charge
-		Jset	PORTB,bBUTTON,NormBoot	; Button is not pressed - normal boot
-		
-; The "hijacked" main program to show device info until next button press
+; Present the "splash screen" with the Device Info
 
-		call	PreloadDevInf		; Preload Clock memory w/ device info
-		Movlf	cMODRGT,vDspMod		; Display Mode = Right-Scroll
 		bsf	vFlags2,bDEVINF		; Indicate the Device Info Condition
+		call	PreloadDevInf		; Preload Clock memory w/ device info
+		call	PrintTime		; Device info -> Display Buffer
 		
-; Device Info Loop (Borrow the bSHORTB flag)
+; Device Info loops (Borrow the vSecTck variable)
 
-DevInfLoop	Jset	vFlags,bSHORTB,OrigRls	; Original button already released?
-		skipclr	PORTB,bBUTTON		; Nope! Button is still being pressed?
-		bsf	vFlags,bSHORTB		; Nope! Indicate first release
-		goto	DoneOrig		; End of "original button still pressed"
-OrigRls		Jclr	PORTB,bBUTTON,QuitLoop	; New button pressed - get ready to quit
-DoneOrig	call	PrintTime		; Device info -> Display Buffer
-		call	OutputArc		; Display Buffer -> Nixie
-		goto	DevInfLoop		; Device Info Loop iteration done
+		Movlf	cMODTIM,vDspMod		; Display Mode = Time-In-Front [FW ver]
+		Movlf	cFWVACT,vSecTck		; Load the firwmware version arc count
+FwVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
+		Djnz	vSecTck,FwVerLoop	; Show the firmware version for a while
 
-QuitLoop	Point	100			; Short delay to kill any button bounce
-		Jclr	PORTB,bBUTTON,QuitLoop	; New button still being pressed - stay
-		bcf	vFlags2,bDEVINF		; Cancel the Device Info Condition
+		Movlf	cMODDAT,vDspMod		; Display Mode = Date-In-Front [HW ver]
+		Movlf	cHWVACT,vSecTck		; Load the hardware version arc count
+HwVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
+		Djnz	vSecTck,HwVerLoop	; Show the hardware version for a while
 
-; Normal boot
+; Real boot
 
-NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
+		bcf	vFlags2,bDEVINF		; Clear the Device Info Condition
+		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
+		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
+		call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		Movlf	cMODMAG,vDspMod		; Display Mode = MagnetoSpin
 		clrf	vFshCtr			; Reset the Flashing Character Counter
 		bsf	vFlags2,bFROZEN		; Freeze the clock [it became Dizzy]
@@ -1024,7 +1024,7 @@ NormBoot	call	PreloadClk		; Preload Clock Memory w/ a bogus time
 ;---- The Main Loop --------------------------------------------------------------------
 
 MainLoop	call	PrintTime		; Time Memory -> Display Buffer
-		call	OutputArc		; Display Buffer -> Nixie
+		call	OutputArc		; Display Buffer for next arc -> Nixie
 		goto	MainLoop		; Main Loop iteration done
 
 ; Note: In this very simple case, there is no need to hook up the detection of the Index
@@ -1047,10 +1047,10 @@ PreloadClk	Movlf	23,vHour
 ;------ Preload the Clock Memory with device into
 
 PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	15,vMin
+		Movlf	16,vMin
 		Movlf	0,vSec
-		Movlf	1,vMonth		; Required minimum hardware version#
-		Movlf	3,vDay
+		Movlf	2,vMonth		; Hardware version#
+		Movlf	0,vDay
 		Movlf	0,vYear
 		return
 
