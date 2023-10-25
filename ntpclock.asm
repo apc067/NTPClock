@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.17.0
+; NTPClock Firmware v3.17.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -185,13 +185,13 @@ cGC		equ	0			; No Geom Charactierization correction
 cDIGLTP		equ	10			; Digit Light-Up Pause
 cDIGWP		equ	cDIGWAN			; Digit Width Pause
 cDIGIT		equ	cDIGLTP+cDIGWP		; Total Digit width
-cIDP		equ	15			; Inter-Digit Pause
-cHDIGP		equ	cDIGIT/2		; Half Digit Pause
+cIDP		equ	16			; Inter-Digit Pause
+cHDIGP		equ	(cDIGIT+cIDP)/2		; Half Digit Pause
 cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPARC-cSTRING)/2-cGC	; Pre-String Pause
-cARCCOR		equ	0			; Arc Correction {3}
+cARCCOR		equ	-1			; Arc Correction {3}
 cPOSTSP		equ	cPRESP-cSCRGAP+cARCCOR	; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	70			; Index Hole Parallax Correction {4}
 cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
@@ -1048,7 +1048,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadFwInf	Movlf	3,pClkMem		; FW version# [major.minor.subminor]
 		Movlf	17,pClkMem+1
-		Movlf	0,pClkMem+2
+		Movlf	1,pClkMem+2
 		Movlf	0,pClkMem+3		; FW sub-subminor, i.e., number of
 		Movlf	0,pClkMem+4		; commits since last release
 		Movlf	0,pClkMem+5		; (3-digit value, 1 digit per register)
@@ -1280,9 +1280,9 @@ OutputSup	Movff	vDspPtr,FSR		; Start of the arc's Display Buffer
 SupLoop		movf	INDF,W			; Access the current digit
 		andlw	cXDMSK			; Cut the Flashing attribute
 		xorlw	cSUPMSK			; Reverse the Suppress If Zero attibute
-		Jnz	NoSup			; Digit is a suppressed zero?
+		Jnz	NoSuppdZero		; Digit is a suppressed zero?
 		Point	cHDIGP			; Yepp! Issue a Half Digit Pause
-NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
+NoSuppdZero	incf	FSR,F			; Increment Dispaly Buffer's pointer
 		Djnz	vGenCtr,SupLoop		; Loop until string is over
 		return
 
@@ -1293,8 +1293,9 @@ NoSup		incf	FSR,F			; Increment Dispaly Buffer's pointer
 ; Output: FSR points to the next position
 
 OutputNum	call	OutputDig		; 1st digit
+		Jz	SuppdZero		; Suppressed zero: No Inter-Digit Pause
 		Point	cIDP			; Inter-Digit Pause
-		call	OutputDig		; 2nd digit
+SuppdZero	call	OutputDig		; 2nd digit
 		return
 
 
@@ -1302,6 +1303,7 @@ OutputNum	call	OutputDig		; 1st digit
 	
 ; Input:  FSR = Current position in the Display Buffer to read from
 ; Output: FSR points to the next position
+;         Z flag set for suppressed zero 
 
 OutputDig	movf	INDF,W			; Access the digit
 		andlw	cXDMSK			; Cut the Flashing attribute
@@ -1313,7 +1315,9 @@ CharOn		Movff	INDF,PORTA		; Light the Nixie
 CharOff		Point	cDIGLTP			; Digit Light-Up Pause
 		Movlf	cSPACE,PORTA		; Unlight the Nixie
 		Point	cDIGWP			; Digit Width Pause
+		movlw	1			; Indicate no suppressed zero
 DigDone		incf	FSR,F			; Advance the pointer in Display Buffer
+		iorlw	0			; Mark suppressed zero in Z flag
 		return
  
 
