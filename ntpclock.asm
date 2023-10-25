@@ -1,6 +1,6 @@
 ; ntpclock.asm
 ;
-; NTPClock Firmware v3.16.0
+; NTPClock Firmware v3.17.0
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
 ; (C) Peter Csaszar - http://www.nixiana.com
@@ -50,8 +50,8 @@
 ;    - Right-Scroll:  vDspMod = 6 - Continuous right scroll
 ;
 ; 2. Operating Modes
-;    - Normal:      vFlags2:bDEVINF = 0 - Display time & date
-;    - Device Info: vFlags2:bDEVINF = 1 - Display FW version & req'd HW version instead
+;    - Normal:        vFlags2:bFWINF = 0 - Display time & date
+;    - Firmware Info: vFlags2:bFWINF = 1 - Display FW version & # of unreleased commits
 ;
 ; 3. Operating States (in Normal Operating Mode)
 ;    - Running: vSetPtr = 0     - Regular clock operation
@@ -114,7 +114,7 @@ cDBLTM		equ	200			; Double Click depress max time [ms]
 cDRMUL		equ	1			; Note duration multiplier {1}			
 cPDMUL		equ	4			; Buzzer pitch divider multiplier {2}
 cFWVTM		equ	4			; Firmware version display duration [s]
-cHWVTM		equ	2			; Hardware version display duration [s]
+cSSMTM		equ	2			; FW sub-subminor display duration [s]
 
 ; Display Mode constants
 
@@ -156,7 +156,7 @@ cTMRCNT		equ	256			; Timer0 required count (Just max out)
 
 cVSPINS		equ	cVSPIN/60		; Carousel rotation speed [rev/s]
 cFWVACT		equ	cFWVTM*cVSPINS*cARCPRV	; Firmware version arc count [arc]
-cHWVACT		equ	cHWVTM*cVSPINS*cARCPRV	; Hardware version arc count [arc]
+cSSMACT		equ	cSSMTM*cVSPINS*cARCPRV	; Firmware sub-subminor arc count [arc]
 cTMRRLD		equ	256-cTMRCNT		; Timer0 reload value (Now unused!)
 cICPS		equ	cFCLK/cCCPIC		; Instruction cycles per sec [ic/s]
 
@@ -269,7 +269,7 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; arcs in Stationary behavior line up with the depth-wise middle of the floppy drive.
 ;
 ; {5} These parameters control the behavior, whereby switching to Stationary display
-; behavior the display will begins to right-scroll quickly until the correct alignment
+; behavior, the display will begin to right-scroll quickly until the correct alignment
 ; is achieved. The parameters are as follows:
 ; 
 ;  - cRBIDXP: The length of the pause ("Rubber Pause" for short) that is executing while
@@ -325,7 +325,7 @@ bCANSHT		equ	4			; Cancel Short Button Event flag's bit#
 bARCCNT		equ	0			; Arc Count flag's bit#
 cARCMSK		equ	1<<bARCCNT		; Arc Count flag's bit mask
 bFROZEN		equ	1			; Frozen Clock Condition flag's bit#
-bDEVINF		equ	2			; Device Info Condition flag's bit#
+bFWINF		equ	2			; Firmware Info Condition flag's bit#
 bQUIDLE		equ	3			; Idx Hole Should Quit Idle flag's bit#
 bSAWIDX		equ	4			; Saw Idx Hole During Quidle flag's bit#
 bIDXPA		equ	5			; Index Hole in Previous Arc flag's bit#
@@ -466,19 +466,19 @@ vFlags2		equ	0x0F			; System flags #2
 ; vFlags2:
 ;
 ;   Bits: 7 6 5 4 3 2 1 0
-;         - - P I Q N R A
+;         - - P I Q F R A
 ;
 ;         A (0): Arc Count flag [1-bit counter; in Alternating Mode, 0=front, 1=back]
 ;         R (1): Frozen Clock Condition flag
-;         N (2): Device Info Condition flag
+;         F (2): Firmware Info Condition flag
 ;         Q (3): Index Hole Should Quit Idle ("Quidle") flag
 ;         I (4): Saw Index Hole During Quidle flag
 ;         P (5): Index Hole in Previous Arc flag
 
 ; Clock Memory (In display order)
 ;
-; CUSTOMIZATION: Change the order of variables to reflect display preferences (updating
-; the variable addresses to retain the increasing order from 0x10 to 0x15, of course).
+; LOCALIZATION: Change the order of variables to reflect display preferences (updating
+; the variable addresses to retain the increasing order from 0x10 to 0x15).
 
 pClkMem		equ	0x10			; Pointer to the start of Clock Memory
 
@@ -991,27 +991,27 @@ Start		Movlf	cSPACE,PORTA		; Start with a blanked Nixie
 		Movlf	pDspBuf,vCrpPtr		; Initialize the Chirp Pointer
 		clrf	vTnPtr			; Reset the Tune Pointer
 
-; Present the "splash screen" with the Device Info
+; Present the "splash screen" with firmware info
 
-		bsf	vFlags2,bDEVINF		; Indicate the Device Info Condition
-		call	PreloadDevInf		; Preload Clock memory w/ device info
-		call	PrintTime		; Device info -> Display Buffer
+		bsf	vFlags2,bFWINF		; Indicate the Firmware Info Condition
+		call	PreloadFwInf		; Preload Clock memory w/ firmware info
+		call	PrintTime		; Firmware info -> Display Buffer
 		
-; Device Info loops (Borrow the vSecTck variable)
+; Firmware Info loops (Borrow the vSecTck variable)
 
 		Movlf	cMODTIM,vDspMod		; Display Mode = Time-In-Front [FW ver]
-		Movlf	cFWVACT,vSecTck		; Load the firwmware version arc count
+		Movlf	cFWVACT,vSecTck		; Load firwmware version arc count
 FwVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
-		Djnz	vSecTck,FwVerLoop	; Show the firmware version for a while
+		Djnz	vSecTck,FwVerLoop	; Show firmware version for spec'd time
 
 		Movlf	cMODDAT,vDspMod		; Display Mode = Date-In-Front [HW ver]
-		Movlf	cHWVACT,vSecTck		; Load the hardware version arc count
-HwVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
-		Djnz	vSecTck,HwVerLoop	; Show the hardware version for a while
+		Movlf	cSSMACT,vSecTck		; Load sub-subminor arc count
+SsmVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
+		Djnz	vSecTck,SsmVerLoop	; Show sub-subminor for specified time
 
 ; Real boot
 
-		bcf	vFlags2,bDEVINF		; Clear the Device Info Condition
+		bcf	vFlags2,bFWINF		; Clear the Firmware Info Condition
 		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
 		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
 		call	PreloadClk		; Preload Clock Memory w/ a bogus time
@@ -1044,14 +1044,14 @@ PreloadClk	Movlf	23,vHour
 		return
 
 	
-;------ Preload the Clock Memory with device into
+;------ Preload the Clock Memory with firmware into (needs to be localization-agnostic)
 
-PreloadDevInf	Movlf	3,vHour			; Firmware version# [major.minor.subminor]
-		Movlf	16,vMin
-		Movlf	0,vSec
-		Movlf	2,vMonth		; Hardware version#
-		Movlf	0,vDay
-		Movlf	0,vYear
+PreloadFwInf	Movlf	3,pClkMem		; FW version# [major.minor.subminor]
+		Movlf	17,pClkMem+1
+		Movlf	0,pClkMem+2
+		Movlf	0,pClkMem+3		; FW sub-subminor, i.e., number of
+		Movlf	0,pClkMem+4		; commits since last release
+		Movlf	0,pClkMem+5		; (3-digit value, 1 digit per register)
 		return
 
 	
@@ -1085,19 +1085,21 @@ PrintLoop	call	PrintNum		; Print the value
 		bsf	INTCON,T0IE		; Re-enable the Timer0 Interrupt
 		
 ; 2 Remaining chores
-		bsf	pDspHr+1,bDP		; Decimal point after hours
+		Jclr	vFlags2,bFWINF,NoFwInf	; Firmware Info Condition?
+		bsf	pDspBuf+1,bDP		; Decimal point after FW major
+		bsf	pDspBuf+3,bDP		; Decimal point after FW minor
+		bsf	pDspBuf,bSUPZ		; FW major leading 0 suppressed
+		bsf	pDspBuf+2,bSUPZ		; FW minor leading 0 suppressed
+		bsf	pDspBuf+4,bSUPZ		; FW subminor leading 0 suppressed
+		bsf	pDspBuf+6,bSUPZ		; FW sub-sumbinor leading 0's suppressed
+		bsf	pDspBuf+8,bSUPZ		; (3-digit value, 1 digit per register)
+		bsf	pDspBuf+10,bSUPZ
+		goto	DonePT			; Done with Firmware Info printout
+NoFwInf		bsf	pDspHr+1,bDP		; Decimal point after hours
 		bsf	pDspMin+1,bDP		; Decimal point after minutes
-		Jclr	vFlags2,bDEVINF,NoDev	; 1. Device Info Condition
-		bsf	pDspBuf,bSUPZ		; FW major value leading 0 suppressed
-		bsf	pDspBuf+2,bSUPZ		; FW minor value leading 0 suppressed
-		bsf	pDspBuf+4,bSUPZ		; FW subminor value leading 0 suppressed
-		bsf	pDspBuf+6,bSUPZ		; HW major value leading 0 suppressed
-		bsf	pDspBuf+8,bSUPZ		; HW minor value leading 0 suppressed
-		bsf	pDspBuf+10,bSUPZ	; HW subminor value leading 0 suppressed
-		goto	DonePT			; Done with Device Info printout
-NoDev		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
-		bsf	pDspDay,bSUPZ		; Day  value leading 0 suppressed
-		Jclr	PORTB,b1224H,DonePT	; 2. The 12-hour notation
+		bsf	pDspMon,bSUPZ		; Month value leading 0 suppressed
+		bsf	pDspDay,bSUPZ		; Day value leading 0 suppressed
+		Jclr	PORTB,b1224H,DonePT	; 12-hour notation?
 		bsf	pDspHr,bSUPZ		; Hour value leading 0 suppressed
 		Cmpfl	vHour,12		; Hour<12 (i.e., AM)?
 		Jlt	DonePT			; Yepp! Do not flash the decimal points
@@ -1569,7 +1571,7 @@ IncYear		incf	vYear,F			; Increment year
 ; Note: This "subroutine" assumes that every year that is divisible by 4 is a leap
 ; year. Therefore, while it would have worked perfectly in the special year 2000 (had
 ; this clock been born before 2000), it will not work correctly in year 2100 (should
-; we still be around to be inconvenienced by it...)!
+; this clock still be operational at that time...).
 
 ; Output: 
 ;  - Z set if current day just rolled over
