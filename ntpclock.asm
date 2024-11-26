@@ -201,9 +201,9 @@ cCATCHP		equ	6*cSCRGAP		; Stat display resync catchup pause (5}
 cMAGP		equ	cSCRGAP+2		; Slightly too long pause for Mag Spin
 cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
  		
- 		if	cPRESP>255 		; Check the value of cPRESP {6}
+ 	if	cPRESP>255 			; Check the value of cPRESP {6}
 		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
-		endif
+	endif
 
 ; Notes:
 ;
@@ -577,18 +577,16 @@ vPDMCtr		equ	0x43			; Buzzer Pitch Div Multiplier Counter
 ; Macros
 ;***************************************************************************************
 
-;==== 1. Our generic macro library =====================================================
+;==== 1. Generic macros ================================================================
 
 		#include "MyPICMacros.inc"	; Useful macro collection for PIC chips
 
 
 ;==== 2. Other =========================================================================
 
-;---- Streamline point delay generation ------------------------------------------------
+;---- Streamlined point delay generation -----------------------------------------------
 
 ; Parameters: Literal: Amount of point delay (0...255)
-;
-; Operation: PtDelay(Lit)
 
 Point		macro	mcLit
 		movlw	mcLit
@@ -608,9 +606,8 @@ Point		macro	mcLit
 		goto	Start			; Jump to start
 		data	'N','i','x'		; "Nix" for Nixie (For fun!)
 
-;---- Interrupt jump address (4) -------------------------------------------------------
+;---- Interrupt handler jump address (4) -----------------------------------------------
 
-		org	4
 		goto	IntHdl			; Jump to the handler
 
 
