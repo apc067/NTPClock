@@ -2,7 +2,7 @@
 ;
 ; Library of useful macros for the Microchip PIC [particularly PIC16*] microcontrollers
 ;
-; (C) Peter Csaszar - http://www.nixiana.com
+; (C) Peter Csaszar - https://www.nixiana.com
 
 
 ; Important note! Care must be taken when using macros after "btfs?" instructions (now

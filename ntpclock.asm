@@ -3,7 +3,7 @@
 ; NTPClock Firmware v3.17.1
 ; PIC16F84A Assembly Code for the World's First Nixie Tube Propeller Clock
 ;
-; (C) Peter Csaszar - http://www.nixiana.com
+; (C) Peter Csaszar - https://www.nixiana.com
 
 
 ;***************************************************************************************
