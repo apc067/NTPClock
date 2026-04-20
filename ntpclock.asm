@@ -1422,22 +1422,17 @@ MagniLoop
 		bsf	vFlags2,bSAWIDX		; Assume Index Hole will be seen
 		Jclr	PORTB,bINDEXH,QuitIdle	; Index Hole detected: quit Idle!
 		bcf	vFlags2,bSAWIDX		; Index Hole wasn't seen
-CoreLoop	decfsz	vPDMCtr,F		; Buzzer pitch div multiplier done yet?
-		goto	NoToggle		; Nope! Move on
+CoreLoop	Djnz	vPDMCtr,NoToggle	; Loop on the pitch div multiplier
 		Movlf	cPDMUL,vPDMCtr		; Reload the Pitch Div Multipler Ctr
-		decfsz	vBzCtr,F		; Buzzer half-cycle done yet?
-		goto	NoToggle		; Nope! Move on
+		Djnz	vBzCtr,NoToggle		; Loop on the pitch divider
 		Movff	vBzWid,vBzCtr		; Reload the Buzzer Half-Cycle Counter
 		movlw	cBZMSK			; Toggle the buzzer output!
 		xorwf	PORTB,F
-NoToggle	decfsz	vItrCtr,F		; 1 point passed yet?		
-		goto	CoreLoop		; Nope! Stay in the Core Loop
+NoToggle	Djnz	vItrCtr,CoreLoop	; Loop on the point's iterations		
 	if DBG_TMAG				; *** Time Magnifier start
-		decfsz	vMagCtr,F		; Magnification done yet?
-		goto	MagniLoop		; Nope! Stay in loop
+		Djnz	vMagCtr,MagniLoop	; Loop on the magnification factor
 	endif					; *** Time Magnifier end
-		decfsz	vPntCtr,F		; Point delay passed yet?
-		goto	PointLoop		; Nope! Stay in loop
+		Djnz	vPntCtr,PointLoop	; Loop on the delay's points
 QuitIdle	bcf	PORTB,bIDLE		; Clear the Idle diagnostic bit
 		return
  
