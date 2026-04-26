@@ -51,6 +51,7 @@ The firmware can be built in **MPLAB IDE v8.92**, using the provided MCP-file.
 * 3.16.0	-	Add unconditional "splash screen" upon boot
 * 3.17.0	-	Return Device Info to be Firmware Info again
 * 3.17.1	-	Improve timing of printouts with suppressed zeroes
+* 3.17.2	-	Improve the display rotation speed accuracy
 
 ## Author Info
 

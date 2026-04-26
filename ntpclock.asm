@@ -191,7 +191,7 @@ cNUMBER		equ	2*cDIGIT+cIDP		; Total Number width
 cINP		equ	42			; Inter-Number Pause
 cSTRING		equ	3*cNUMBER+2*cINP	; Total String width
 cPRESP		equ	(cPTPARC-cSTRING)/2-cGC	; Pre-String Pause
-cARCCOR		equ	-1			; Arc Correction {3}
+cARCCOR		equ	0			; Arc Correction {3}
 cPOSTSP		equ	cPRESP-cSCRGAP+cARCCOR	; Post-String Pause (for Left-Scroll)
 cPRXCOR		equ	70			; Index Hole Parallax Correction {4}
 cRBIDXP		equ	10			; Rubber Idx Hole Expectation Pause (5}
@@ -227,8 +227,8 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; quality profile).
 ;
 ; All values except ICPerIter are integers. Technically speaking, IterPerPoint is also a
-; function of PitchDiv. However, by putting the PitchDivMul counting "at a lower order"
-; than the PitchDiv counting, a much higher execution time stability is achieved, and
+; function of PitchDiv. However, by putting the PitchDivMul counting nested in the loop
+; of the PitchDiv counting, a much higher execution time stability is achieved, and
 ; the ideal value of IterPerPoint remains almost constant (a variation of about 0.15 
 ; across the PitchDivider values of all reasonable frequencies).
 ;
@@ -243,15 +243,15 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; One more trick to get the total Points Per Arc value for a silent clock as close to
 ; the mark as possible, and make the quasi-stationary Stand-Scrolling display as
 ; motionless as possible (just for fun), is to pick the note that is being "played" by
-; the silent clock strategically. After experimentation, E6 was found to be the winner
-; for this note called the Silent Note. (Since the Silent music option is a special case
-; of Chirpie, E6 is represented as the note associated with the digit 7.)
+; the silent clock strategically. After experimentation, the pitch divider of 149 was
+; found to be the winner; the resulting (but silenced) frequency is somewhere between
+; the C#5 and D5 notes, and is referred to as the Silent Note.
 ;
 ; {3} This is the "shim" factor to synchronize the angular speed of display generation
-; to the angular speed of the carousel rotation as much as possible. It accounts for the
-; inaccuracy of the rounded IterPerPoint value, as well as for all the instruction
-; cycles not spent in the Idle-code. It is tuned by finding the value, where the 
-; Stand-Scrolling display is the closest to stationary. Despite all these efforts,
+; to the angular speed of the carousel rotation as much as possible, which means
+; making the Stand-Scrolling display as stationary as possible - however, by carefully
+; selecting the CCor value and the Silent Note pitch divider, this correction is not
+; necessary, and its value can be set to zero. (Note that despite all these efforts,
 ; achieving a quasi-stationary display this way is virtually impossible, and it may
 ; also be affected by temperature and other factors, as the carousel rotation speed is
 ; adjusted by a circuitry independent of the NTPClock. Therefore, for the Stationary
@@ -259,7 +259,7 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; IR LED/photodiode pair recycled from the original floppy drive. However, fine-tuning
 ; the display synchronicity of the Stand-Scrolling display is not just a nutty pastime;
 ; it'll maximize the correctness of the specified display scroll angular speed (cVSCRL)
-; for the scrolling display modes.
+; for the scrolling display modes.)
 ;
 ; {4} Correction factor compensating for the fact that while the "Index Hole" IR LED is
 ; positioned such that it perfectly lines up with the photodiode when the longer edge of
@@ -352,7 +352,7 @@ cISSMOO		equ	4			; Music ID of the first smooth tune
 cATST		equ	cNUMMUS-2		; Last-1 music option: A-Note Test
 cPCHTST		equ	cNUMMUS-1		; Last music option: Pitch Test
 cBPM		equ	cVSPIN*cARCPRV/cDRMUL/4	; Beats Per Minute [1/4 notes/min]
-cSILDIG		equ	7			; Digit for Silent Note (see {2} above)
+cSILDIV		equ	149			; Silent Note pitch divider {2}
 
 ; Tune definition formalism
 
@@ -1045,7 +1045,7 @@ PreloadClk	Movlf	23,vHour
 
 PreloadFwInf	Movlf	3,pClkMem		; FW version# [major.minor.subminor]
 		Movlf	17,pClkMem+1
-		Movlf	1,pClkMem+2
+		Movlf	2,pClkMem+2
 		Movlf	0,pClkMem+3		; FW sub-subminor, i.e., number of
 		Movlf	0,pClkMem+4		; commits since last release
 		Movlf	0,pClkMem+5		; (3-digit value, 1 digit per register)
@@ -1326,11 +1326,11 @@ SoundMusic	call	BuzzerOff		; Start by assuming buzzer is to be off
 		Movff	vCrpPtr,FSR		; Nupp! Chirpie - "Play" the next digit
 		movf	INDF,W			; Access the digit
 		andlw	cDIGMSK			; Cut all the attributes
-		tst	vMsType			; Music type is 0 (Silence)?
-		skipnz				; Nupp! Sound the actual digit
-		movlw	cSILDIG			; Yepp! "Sound" the Silent Note {2}
 		call	DigPitchIDLut		; Look up the digit's Pitch ID
 		call	NotePitchLut		; Look up the Pitch ID's pitch divider
+		tst	vMsType			; Music type is 0 (Silence)?
+		skipnz				; Nupp! Just play the Chirpie sound
+		movlw	cSILDIV			; Yepp! "Sound" the Silent Note {2}
 		movwf	vBzWid			; Apply it to the current sound
 		incf	vCrpPtr,F		; Advance Chirp Pointer to the next digit
 		Cmpfl	vCrpPtr,pDspBuf+12	; Reached the end of the Display Buffer?
