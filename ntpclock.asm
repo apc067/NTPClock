@@ -148,7 +148,7 @@ cDIGWID		equ	8			; Digit width [mm]
 
 ; Timing configuration & adjustment constants
 
-cTCKCOR		equ	0			; Seconds per 1 leap second (0: unused)
+cTCKCOR		equ	4616			; Secs per leap second (0: unused) {7}
 cTMRPSC		equ	256			; Timer0 prescaler (Also see {#}!)
 cTMRCNT		equ	256			; Timer0 required count (Just max out)
 
@@ -170,9 +170,17 @@ cTCKPS		equ	cICPS/cTMRDIV		; Ticks per sec [tick/s]
 cLNGTCK		equ	cLNGTM*cTCKPS/1000	; Long Button Event min time [tick]
 cDBLTCK		equ	cDBLTM*cTCKPS/1000	; Double Click depress max time [tick]
 
-	if	cTCKPS*cTMRDIV!=cICPS
+	if cTCKPS*cTMRDIV!=cICPS
 		messg	"*** WARNING! Timer tick period is not a divisor of 1 second!"
 	endif
+
+	if cTCKCOR>0				; Leap second management
+cTCKCR		equ	cTCKCOR
+	else
+cTCKCR		equ	-cTCKCOR
+	endif
+cTCKCR0		equ	low(cTCKCR)
+cTCKCR1		equ	high(cTCKCR)
 
 ; Point delay constants for display layout [point]
 
@@ -201,7 +209,7 @@ cCATCHP		equ	6*cSCRGAP		; Stat display resync catchup pause (5}
 cMAGP		equ	cSCRGAP+2		; Slightly too long pause for Mag Spin
 cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
  		
- 	if	cPRESP>255 			; Check the value of cPRESP {6}
+ 	if cPRESP>255 				; Check the value of cPRESP {6}
 		error 	"*** ERROR! Pre-String Pause value doesn't fit into a byte"
 	endif
 
@@ -295,6 +303,53 @@ cMAGGAP		equ	4*cSCRGAP		; Gap for MagnetoSpin's rapid right scrl
 ; fits into a byte [so that PtDelay's implementation can be simpler], everything else
 ; does too. However, this value IS dangerously close to the byte limit, therefore the
 ; different display layout delays need to be picked carefully.
+;
+; {7} Calculating cTCKCOR: If the long-term accuracy measurement shows that the clock
+; is too fast and gained S seconds over M minutes, the period T_sec representing one
+; second is too short
+;
+;   T_sec(actual) = T_sec(ideal) * (60 * M / (60 * M + S))
+;
+; and needs to be expanded:
+;
+;   T_sec(corrected) = T_sec(ideal) = T_sec(actual) * ((60 * M + S) / (60 * M)
+;                    = T_sec(actual) * (1 + S / (60 * M))
+;
+;   T_sec(corrected) / T_sec(actual) = 1 + S / (60 * M)         (1)
+;
+; Timer0 is clocked from f_clk/4 with 1:256 prescaler, and the IRQ fires upon the
+; rollover of the free-running TMR0 register (referred to as a "tick"). Therefore
+;
+;   f_tick(actual) = 19,660,800 / (4 * 256 * 256)
+;                  = 75
+;   T_sec(actual) = T_tick(actual) * 75
+;
+; Increasing the second-period by just 1 extra tick would bring about a drastic change,
+; so the trick is to do it only for every C seconds (where C is the cTCKCOR constant in
+; the code). In this case, the average becomes
+;
+;   T_sec(corrected) = T_tick(actual) * ((75 * (C - 1) + (75 + 1)) / C)
+;                    = T_tick(actual) * ((75 * C + 1) / C)
+;                    = T_tick(actual) * (75 + 1 / C)
+;
+; which means
+;
+;   T_sec(corrected) = (T_sec(actual) / 75) * (75 + 1 / C)
+;                    = T_sec(actual) * (1 + 1 / (75 * C))
+;
+;   T_sec(corrected) / T_sec(actual) = 1 + 1 / (75 * C)         (2)
+;
+; In conclusion, from (1) & (2) it follows that
+;
+;   1 + S / (60 * M) = 1 + 1 / (75 * C)
+;   S / (60 * M) = 1 / (75 * C)
+;
+;   C = (60 * M) / (75 * S) = (4 * M) / (5 * S)
+;   -------------------------------------------
+;
+; The same logic applies to shortening the second-period if the clock is too slow: in
+; this case S is negative, and the resulting negative C means that the "leap seconds"
+; only consist of 74 ticks.
 
 ; Character-related constants
 
@@ -545,22 +600,23 @@ pDspYr		equ	pDspBuf+(vYear-pClkMem)*2
 ; Misc. system variables
 
 vSecTck		equ	0x30			; Second Tick Counter (1 byte!)
-vCorTck		equ	0x31			; Second Tick Correction Counter
-vButTck		equ	0x32			; Button Hold Tick Counter (1 byte!)
-vItrCtr		equ	0x33			; Loop iter ctr for 1 point (PI/1000)
-vMagCtr		equ	0x34			; Time Magnifier Counter (for debug)
-vPntCtr		equ	0x35			; Delay Counter [point]
-vGenCtr		equ	0x36			; Generic loop counter
+vTckCr0		equ	0x31			; Second Tick Correction Counter (low)
+vTckCr1		equ	0x32			; Second Tick Correction Counter (high)
+vButTck		equ	0x33			; Button Hold Tick Counter (1 byte!)
+vItrCtr		equ	0x34			; Loop iter ctr for 1 point (PI/1000)
+vMagCtr		equ	0x35			; Time Magnifier Counter (for debug)
+vPntCtr		equ	0x36			; Delay Counter [point]
+vGenCtr		equ	0x37			; Generic loop counter
 
 ; Music-related variables
 
-vMsType		equ	0x37			; Music Type
-vCrpPtr		equ	0x38			; Chirp Pointer (Along Display Buffer)
-vTnPtr		equ	0x39			; Tune Pointer (Along current tune LUT)
-vNoteDr		equ	0x40			; Current note's [remaining] duration
-vBzCtr		equ	0x41			; Buzzer Half-Cycle Counter [iter]
-vBzWid		equ	0x42			; Buzzer half-cycle width [iter]
-vPDMCtr		equ	0x43			; Buzzer Pitch Div Multiplier Counter
+vMsType		equ	0x38			; Music Type
+vCrpPtr		equ	0x39			; Chirp Pointer (Along Display Buffer)
+vTnPtr		equ	0x3A			; Tune Pointer (Along current tune LUT)
+vNoteDr		equ	0x3B			; Current note's [remaining] duration
+vBzCtr		equ	0x3C			; Buzzer Half-Cycle Counter [iter]
+vBzWid		equ	0x3D			; Buzzer half-cycle width [iter]
+vPDMCtr		equ	0x3E			; Buzzer Pitch Div Multiplier Counter
 
 ; Music types:
 ;
@@ -1010,7 +1066,8 @@ SsmVerLoop	call	OutputArc		; Display Buffer for next arc -> Nixie
 
 		bcf	vFlags2,bFWINF		; Clear the Firmware Info Condition
 		Movlf	cTCKPS,vSecTck		; Load the Second Tick Counter
-		Movlf	cTCKCOR,vCorTck		; Load the Tick Correction
+		Movlf	cTCKCR0,vTckCr0		; Load the Tick Correction Counter
+		Movlf	cTCKCR1,vTckCr1
 		call	PreloadClk		; Preload Clock Memory w/ a bogus time
 		Movlf	cMODMAG,vDspMod		; Display Mode = MagnetoSpin
 		clrf	vFshCtr			; Reset the Flashing Character Counter
@@ -1514,13 +1571,22 @@ AdvClock	Retset	vFlags2,bFROZEN		; Don't advance clock if it is Frozen
 		return				; Nope! Get out of here
 
 		Movlf	cTCKPS,vSecTck		; Yepp! Reload the Ticks Per Sec value
-		tst	vCorTck			; Leap second facility in use at all?
-		Jz	IncSec			; Nope! Move on
-		decfsz	vCorTck,F		; Is this gonna be a "leap second"?
+	if cTCKCOR==0				; Leap second facility in use at all?
 		goto	IncSec			; Nope! Move on
-		incf	vSecTck,F		; Leap the second (uncomment one)
-;;;		decf	vSecTck,F		; De-Leap the second (uncomment one)
-		Movlf	cTCKCOR,vCorTck		; Reload the Tick Correction value
+	endif
+		decfsz	vTckCr0,F		; Could this be a "leap second"?
+		goto	IncSec			; Nope! Move on
+		tst	vTckCr1			; Is this gonna be a "leap second"?
+		Jz	LeapSec			; Yepp! Act upon it
+		decf	vTckCr1,F		; "Pay forward" the upper byte decrement
+		goto	IncSec			; Move on
+LeapSec		Movlf	cTCKCR0,vTckCr0		; Reload the Tick Correction Counter
+		Movlf	cTCKCR1,vTckCr1
+	if cTCKCOR>0				; Adjust for the leap second
+		incf	vSecTck,F
+	else
+		decf	vSecTck,F
+	endif
 		
 IncSec		incf	vSec,F			; Increment seconds
 		skipclr	vFlags,bSHORTB		;   Value is being set?
